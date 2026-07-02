@@ -38,7 +38,7 @@ export default function Containers() {
   const [runningAction, setRunningAction] = useState(null);
   const [logsTarget, setLogsTarget] = useState(null);
   const [statsTarget, setStatsTarget] = useState(null);
-  const [showCreate, setShowCreate] = useState(false);
+  const [createMode, setCreateMode] = useState(null); // null | "pull" | "existing"
 
   const refresh = useCallback(() => {
     return listContainers()
@@ -110,7 +110,10 @@ export default function Containers() {
         <h2>Containers</h2>
         <div style={{ display: "flex", gap: 8 }}>
           <button className="btn btn-sm" onClick={refresh}>Refresh</button>
-          <button className="btn btn-sm btn-primary" onClick={() => setShowCreate(true)}>
+          <button className="btn btn-sm" onClick={() => setCreateMode("existing")}>
+            + From image
+          </button>
+          <button className="btn btn-sm btn-primary" onClick={() => setCreateMode("pull")}>
             + Add container
           </button>
         </div>
@@ -204,11 +207,12 @@ export default function Containers() {
         <StatsModal container={statsTarget} onClose={() => setStatsTarget(null)} />
       )}
 
-      {showCreate && (
+      {createMode && (
         <CreateContainerModal
-          onClose={() => setShowCreate(false)}
+          initialMode={createMode}
+          onClose={() => setCreateMode(null)}
           onCreated={() => {
-            setShowCreate(false);
+            setCreateMode(null);
             refresh();
           }}
         />

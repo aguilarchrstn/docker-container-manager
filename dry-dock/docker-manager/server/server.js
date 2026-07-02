@@ -5,6 +5,7 @@ import { fileURLToPath } from "url";
 import { containersRouter } from "./routes/containers.js";
 import { imagesRouter } from "./routes/images.js";
 import { themeRouter } from "./routes/theme.js";
+import { presetsRouter } from "./routes/presets.js";
 import { assertDockerReachable } from "./lib/docker.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -17,6 +18,7 @@ app.use(express.json());
 app.use("/api/containers", containersRouter);
 app.use("/api/images", imagesRouter);
 app.use("/api/theme", themeRouter);
+app.use("/api/presets", presetsRouter);
 
 app.get("/api/health", async (req, res) => {
   const ok = await assertDockerReachable();

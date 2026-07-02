@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { createContainer } from "../api.js";
+import { useEffect, useState } from "react";
+import { createContainer, listImages } from "../api.js";
 
 const RESTART_POLICIES = [
   { value: "no", label: "No" },
@@ -11,7 +11,11 @@ const RESTART_POLICIES = [
 function emptyPort() { return { host: "", container: "", protocol: "tcp" }; }
 function emptyEnv() { return { key: "", value: "" }; }
 
-export default function CreateContainerModal({ onClose, onCreated }) {
+export default function CreateContainerModal({ onClose, onCreated, initialMode = "pull" }) {
+  const [mode, setMode] = useState(initialMode); // "pull" | "existing"
+  const [localImages, setLocalImages] = useState([]);
+  const [loadingImages, setLoadingImages] = useState(true);
+
   const [image, setImage] = useState("");
   const [name, setName] = useState("");
   const [command, setCommand] = useState("");
@@ -21,6 +25,29 @@ export default function CreateContainerModal({ onClose, onCreated }) {
   const [env, setEnv] = useState([emptyEnv()]);
   const [error, setError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    listImages()
+      .then((imgs) => {
+        setLocalImages(imgs);
+        const tagged = imgs.find((i) => i.tags.length > 0);
+        if (mode === "existing" && tagged) setImage(tagged.tags[0]);
+      })
+      .catch(() => {})
+      .finally(() => setLoadingImages(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function switchMode(next) {
+    setMode(next);
+    setError(null);
+    if (next === "existing") {
+      const tagged = localImages.find((i) => i.tags.length > 0);
+      setImage(tagged?.tags[0] || "");
+    } else {
+      setImage("");
+    }
+  }
 
   function updatePort(i, field, value) {
     setPorts((rows) => rows.map((r, idx) => (idx === i ? { ...r, [field]: value } : r)));
@@ -32,7 +59,7 @@ export default function CreateContainerModal({ onClose, onCreated }) {
   async function handleSubmit(e) {
     e.preventDefault();
     if (!image.trim()) {
-      setError("Image is required");
+      setError(mode === "existing" ? "Pick an image" : "Image is required");
       return;
     }
     setSubmitting(true);
@@ -55,6 +82,8 @@ export default function CreateContainerModal({ onClose, onCreated }) {
     }
   }
 
+  const taggedImages = localImages.filter((i) => i.tags.length > 0);
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" style={{ width: "min(560px, 100%)" }} onClick={(e) => e.stopPropagation()}>
@@ -66,16 +95,62 @@ export default function CreateContainerModal({ onClose, onCreated }) {
         <form onSubmit={handleSubmit} className="form-body">
           {error && <div className="banner error">{error}</div>}
 
-          <label className="form-label">
-            Image *
-            <input
-              className="form-input mono"
-              placeholder="e.g. nginx:latest"
-              value={image}
-              onChange={(e) => setImage(e.target.value)}
-              autoFocus
-            />
-          </label>
+          <div className="mode-toggle">
+            <button
+              type="button"
+              className={`mode-toggle-btn ${mode === "pull" ? "active" : ""}`}
+              onClick={() => switchMode("pull")}
+            >
+              Pull new image
+            </button>
+            <button
+              type="button"
+              className={`mode-toggle-btn ${mode === "existing" ? "active" : ""}`}
+              onClick={() => switchMode("existing")}
+            >
+              Use local image
+            </button>
+          </div>
+
+          {mode === "pull" ? (
+            <label className="form-label">
+              Image *
+              <input
+                className="form-input mono"
+                placeholder="e.g. nginx:latest"
+                value={image}
+                onChange={(e) => setImage(e.target.value)}
+                autoFocus
+              />
+              <span className="field-hint">
+                Pulled automatically if it isn't on this host yet.
+              </span>
+            </label>
+          ) : (
+            <label className="form-label">
+              Image *
+              {loadingImages ? (
+                <span className="status-label">Loading local images…</span>
+              ) : taggedImages.length === 0 ? (
+                <span className="status-label">
+                  No local images with a tag yet — pull one from the Images page first.
+                </span>
+              ) : (
+                <select
+                  className="form-input mono"
+                  value={image}
+                  onChange={(e) => setImage(e.target.value)}
+                  autoFocus
+                >
+                  {taggedImages.map((img) => (
+                    <option key={img.id} value={img.tags[0]}>
+                      {img.tags.join(", ")}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </label>
+          )}
 
           <label className="form-label">
             Container name

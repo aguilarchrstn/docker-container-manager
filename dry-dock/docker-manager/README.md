@@ -14,15 +14,19 @@ lets you pick every UI color.
     and live stats too. The Dry Dock container itself is automatically
     excluded from the destructive actions (both in the UI and enforced
     server-side) so you can't accidentally take the app down.
-  - **Add container**: pull-and-run a new container from an image, with
-    ports, env vars, command, and restart policy.
+  - **Add container**: either pull-and-run a brand new image, or launch
+    straight from an image you've already got locally — with ports, env
+    vars, command, and restart policy either way.
   - **Monitoring**: a live table of every running container's CPU, memory,
     network, and disk I/O, polling every few seconds — plus a per-container
     stats modal with a CPU sparkline.
   - Images: list, pull (with live progress), remove.
-  - **Appearance**: 5 presets plus a per-color custom picker, Mattermost-style.
-    Saved server-side (`server/data/theme.json`) so it persists across
-    browsers/devices, with a localStorage fallback for instant load.
+  - **Appearance**: 5 built-in presets (locked — pick one as a starting
+    point, but it won't overwrite the original) plus a **Randomize** button
+    and your own **custom presets** you can save, reuse, and delete. Colors
+    are otherwise fully editable per-field, Mattermost-style. The active
+    theme is saved server-side (`server/data/theme.json`) so it persists
+    across browsers/devices, with a localStorage fallback for instant load.
 
 ## Run it (Docker Compose — recommended)
 
@@ -89,15 +93,18 @@ server/
   lib/docker.js         dockerode connection (socket or DOCKER_HOST)
   lib/self.js             detects Dry Dock's own container ID for self-protection
   lib/stats.js             turns raw Docker stats into CPU%/mem/net/disk numbers
-  lib/store.js              reads/writes the saved theme JSON
+  lib/store.js              reads/writes the saved theme + custom presets JSON
   routes/containers.js       list/start/stop/restart/pause/unpause/kill/remove/logs/stats/create
   routes/images.js            list/pull (streamed progress)/remove
-  routes/theme.js               GET/PUT saved theme
-  data/theme.json                 persisted theme (mount this as a volume)
+  routes/theme.js               GET/PUT the active/default theme
+  routes/presets.js               CRUD for user-saved custom presets
+  data/theme.json                   persisted active theme (mount this as a volume)
+  data/presets.json                   persisted custom presets (same volume)
 client/
   src/App.jsx             page routing (containers / monitoring / images / settings)
   src/pages/               Containers.jsx, Monitoring.jsx, Images.jsx, Settings.jsx
-  src/theme/               ThemeContext.jsx, presets.js
+  src/theme/               ThemeContext.jsx, presets.js (built-in, locked),
+                            random.js (theme randomizer)
   src/components/          Sidebar, StatusDot, LogsModal, StatsModal, StatBar,
                             Sparkline, ColorField, CreateContainerModal
   src/lib/format.js        byte/percent formatting helpers

@@ -81,3 +81,12 @@ export const getContainerStats = (id) =>
 
 export const getAllContainerStats = () =>
   request("/containers/stats/summary").then((r) => r.stats);
+
+export const listCustomPresets = () =>
+  request("/presets").then((r) => r.presets);
+
+export const createCustomPreset = (preset) =>
+  request("/presets", { method: "POST", body: JSON.stringify(preset) }).then((r) => r.preset);
+
+export const deleteCustomPreset = (id) =>
+  request(`/presets/${id}`, { method: "DELETE" });
