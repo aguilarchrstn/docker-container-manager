@@ -75,3 +75,9 @@ export const getTheme = () => request("/theme").then((r) => r.theme);
 
 export const saveTheme = (theme) =>
   request("/theme", { method: "PUT", body: JSON.stringify({ theme }) });
+
+export const getContainerStats = (id) =>
+  request(`/containers/${id}/stats`).then((r) => r.stats);
+
+export const getAllContainerStats = () =>
+  request("/containers/stats/summary").then((r) => r.stats);

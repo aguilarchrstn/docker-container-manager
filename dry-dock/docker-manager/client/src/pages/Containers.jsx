@@ -11,6 +11,7 @@ import {
 } from "../api.js";
 import StatusDot from "../components/StatusDot.jsx";
 import LogsModal from "../components/LogsModal.jsx";
+import StatsModal from "../components/StatsModal.jsx";
 import CreateContainerModal from "../components/CreateContainerModal.jsx";
 
 const BULK_ACTIONS = [
@@ -36,6 +37,7 @@ export default function Containers() {
   const [selected, setSelected] = useState(() => new Set());
   const [runningAction, setRunningAction] = useState(null);
   const [logsTarget, setLogsTarget] = useState(null);
+  const [statsTarget, setStatsTarget] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
 
   const refresh = useCallback(() => {
@@ -62,10 +64,14 @@ export default function Containers() {
     });
   }, [containers]);
 
-  const allSelected = containers.length > 0 && selected.size === containers.length;
+  // The Dry Dock container itself is never selectable — bulk actions
+  // against it are blocked server-side too, but keeping it out of the UI
+  // selection entirely avoids a confusing "action blocked" error.
+  const selectable = containers.filter((c) => !c.isSelf);
+  const allSelected = selectable.length > 0 && selected.size === selectable.length;
 
   function toggleAll() {
-    setSelected(allSelected ? new Set() : new Set(containers.map((c) => c.id)));
+    setSelected(allSelected ? new Set() : new Set(selectable.map((c) => c.id)));
   }
 
   function toggleOne(id) {
@@ -162,11 +168,16 @@ export default function Containers() {
                 type="checkbox"
                 className="row-checkbox"
                 checked={selected.has(c.id)}
+                disabled={c.isSelf}
                 onChange={() => toggleOne(c.id)}
                 aria-label={`Select ${c.name}`}
+                title={c.isSelf ? "Dry Dock can't act on itself" : undefined}
               />
               <StatusDot state={c.state} />
-              <span className="name">{c.name}</span>
+              <span className="name">
+                {c.name}
+                {c.isSelf && <span className="self-badge" title="This is the Dry Dock app itself">This app</span>}
+              </span>
               <span className="mono">{c.image}</span>
               <span className="mono">{c.ports.join(", ") || "—"}</span>
               <span className="status-label">{c.status}</span>
@@ -174,6 +185,11 @@ export default function Containers() {
                 <button className="btn btn-sm" onClick={() => setLogsTarget(c)}>
                   Logs
                 </button>
+                {c.state === "running" && (
+                  <button className="btn btn-sm" onClick={() => setStatsTarget(c)}>
+                    Stats
+                  </button>
+                )}
               </div>
             </div>
           ))}
@@ -182,6 +198,10 @@ export default function Containers() {
 
       {logsTarget && (
         <LogsModal container={logsTarget} onClose={() => setLogsTarget(null)} />
+      )}
+
+      {statsTarget && (
+        <StatsModal container={statsTarget} onClose={() => setStatsTarget(null)} />
       )}
 
       {showCreate && (

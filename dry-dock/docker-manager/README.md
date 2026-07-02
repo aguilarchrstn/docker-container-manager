@@ -8,11 +8,21 @@ lets you pick every UI color.
   [dockerode](https://github.com/apocas/dockerode) over `/var/run/docker.sock`.
 - **Frontend:** React + Vite, no CSS framework — just CSS variables so the
   theme picker can restyle the whole app live.
-- **Features (MVP):** list/start/stop/restart/remove containers, view logs,
-  list/pull/remove images, and a full appearance settings page with 5 presets
-  plus per-color custom pickers. Theme is saved server-side (`server/data/theme.json`)
-  so it persists across browsers/devices, with a localStorage fallback for
-  instant load.
+- **Features:**
+  - Containers: list, select one/many, and run **start / stop / restart /
+    pause / resume / kill / remove** on the selection at once. Per-row logs
+    and live stats too. The Dry Dock container itself is automatically
+    excluded from the destructive actions (both in the UI and enforced
+    server-side) so you can't accidentally take the app down.
+  - **Add container**: pull-and-run a new container from an image, with
+    ports, env vars, command, and restart policy.
+  - **Monitoring**: a live table of every running container's CPU, memory,
+    network, and disk I/O, polling every few seconds — plus a per-container
+    stats modal with a CPU sparkline.
+  - Images: list, pull (with live progress), remove.
+  - **Appearance**: 5 presets plus a per-color custom picker, Mattermost-style.
+    Saved server-side (`server/data/theme.json`) so it persists across
+    browsers/devices, with a localStorage fallback for instant load.
 
 ## Run it (Docker Compose — recommended)
 
@@ -77,16 +87,20 @@ Add it to `server/data/theme.json`, `client/src/theme/presets.js`
 server/
   server.js            Express app, serves the built client in production
   lib/docker.js         dockerode connection (socket or DOCKER_HOST)
-  lib/store.js           reads/writes the saved theme JSON
-  routes/containers.js   list/start/stop/restart/remove/logs
-  routes/images.js        list/pull (streamed progress)/remove
-  routes/theme.js          GET/PUT saved theme
-  data/theme.json           persisted theme (mount this as a volume)
+  lib/self.js             detects Dry Dock's own container ID for self-protection
+  lib/stats.js             turns raw Docker stats into CPU%/mem/net/disk numbers
+  lib/store.js              reads/writes the saved theme JSON
+  routes/containers.js       list/start/stop/restart/pause/unpause/kill/remove/logs/stats/create
+  routes/images.js            list/pull (streamed progress)/remove
+  routes/theme.js               GET/PUT saved theme
+  data/theme.json                 persisted theme (mount this as a volume)
 client/
-  src/App.jsx             page routing (containers / images / settings)
-  src/pages/               Containers.jsx, Images.jsx, Settings.jsx
+  src/App.jsx             page routing (containers / monitoring / images / settings)
+  src/pages/               Containers.jsx, Monitoring.jsx, Images.jsx, Settings.jsx
   src/theme/               ThemeContext.jsx, presets.js
-  src/components/          Sidebar, StatusDot, LogsModal, ColorField
+  src/components/          Sidebar, StatusDot, LogsModal, StatsModal, StatBar,
+                            Sparkline, ColorField, CreateContainerModal
+  src/lib/format.js        byte/percent formatting helpers
   src/styles/global.css    every color is a CSS variable
 ```
 
@@ -102,6 +116,8 @@ how most people would want them:
   from the UI, like Portainer's "stacks").
 - Live-streaming logs (currently pulls the last 200 lines on open; a
   websocket/SSE tail would make it live).
+- Historical metrics (current monitoring is live-only; nothing is persisted,
+  so there's no "CPU over the last 24 hours" view yet).
 - Multi-user theme profiles (right now the saved theme is global, not
   per-account).
 - Multi-host support (talk to more than one Docker Engine).

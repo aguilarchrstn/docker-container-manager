@@ -1,5 +1,6 @@
 const NAV = [
   { key: "containers", label: "Containers" },
+  { key: "monitoring", label: "Monitoring" },
   { key: "images", label: "Images" },
   { key: "settings", label: "Appearance" },
 ];

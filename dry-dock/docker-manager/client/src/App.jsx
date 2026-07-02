@@ -3,10 +3,12 @@ import Sidebar from "./components/Sidebar.jsx";
 import Containers from "./pages/Containers.jsx";
 import Images from "./pages/Images.jsx";
 import Settings from "./pages/Settings.jsx";
+import Monitoring from "./pages/Monitoring.jsx";
 import { listContainers, listImages } from "./api.js";
 
 const TITLES = {
   containers: { title: "Containers", subtitle: "Start, stop, and inspect what's running" },
+  monitoring: { title: "Monitoring", subtitle: "Live CPU, memory, network, and disk metrics" },
   images: { title: "Images", subtitle: "Pull new images or clear out old ones" },
   settings: { title: "Appearance", subtitle: "Make it yours" },
 };
@@ -39,6 +41,7 @@ export default function App() {
         </div>
         <div className="content">
           {page === "containers" && <Containers />}
+          {page === "monitoring" && <Monitoring />}
           {page === "images" && <Images />}
           {page === "settings" && <Settings />}
         </div>

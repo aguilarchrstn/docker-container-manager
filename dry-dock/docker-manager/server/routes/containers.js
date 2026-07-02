@@ -1,5 +1,7 @@
 import { Router } from "express";
 import { docker } from "../lib/docker.js";
+import { isSelfContainer } from "../lib/self.js";
+import { summarizeStats } from "../lib/stats.js";
 
 export const containersRouter = Router();
 
@@ -9,22 +11,76 @@ function formatPorts(ports = []) {
     .map((p) => `${p.PublicPort}:${p.PrivatePort}/${p.Type}`);
 }
 
+// Blocks destructive actions against the Dry Dock container itself — taking
+// itself down mid-request would just orphan the UI with no way to recover
+// short of shelling into the host.
+async function blockIfSelf(req, res, next) {
+  if (await isSelfContainer(req.params.id)) {
+    return res.status(409).json({
+      error: "This is the Dry Dock container itself — that action is blocked to avoid taking the app down.",
+    });
+  }
+  next();
+}
+
 containersRouter.get("/", async (req, res) => {
   try {
     const list = await docker.listContainers({ all: true });
-    const containers = list.map((c) => ({
-      id: c.Id,
-      shortId: c.Id.slice(0, 12),
-      name: (c.Names?.[0] || "").replace(/^\//, ""),
-      image: c.Image,
-      state: c.State, // running, exited, paused, created...
-      status: c.Status, // "Up 3 hours", "Exited (0) 2 days ago"
-      ports: formatPorts(c.Ports),
-      created: c.Created,
-    }));
+    const containers = await Promise.all(
+      list.map(async (c) => ({
+        id: c.Id,
+        shortId: c.Id.slice(0, 12),
+        name: (c.Names?.[0] || "").replace(/^\//, ""),
+        image: c.Image,
+        state: c.State, // running, exited, paused, created...
+        status: c.Status, // "Up 3 hours", "Exited (0) 2 days ago"
+        ports: formatPorts(c.Ports),
+        created: c.Created,
+        isSelf: await isSelfContainer(c.Id),
+      }))
+    );
     res.json({ containers });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Live metrics for every running container in one call, so the Monitoring
+// page can poll a single endpoint instead of one request per container.
+containersRouter.get("/stats/summary", async (req, res) => {
+  try {
+    const running = await docker.listContainers({ all: false });
+    const stats = await Promise.all(
+      running.map(async (c) => {
+        try {
+          const raw = await docker.getContainer(c.Id).stats({ stream: false });
+          return {
+            id: c.Id,
+            shortId: c.Id.slice(0, 12),
+            name: (c.Names?.[0] || "").replace(/^\//, ""),
+            ...summarizeStats(raw),
+          };
+        } catch (err) {
+          return {
+            id: c.Id,
+            name: (c.Names?.[0] || "").replace(/^\//, ""),
+            error: err.message,
+          };
+        }
+      })
+    );
+    res.json({ stats });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+containersRouter.get("/:id/stats", async (req, res) => {
+  try {
+    const raw = await docker.getContainer(req.params.id).stats({ stream: false });
+    res.json({ stats: summarizeStats(raw) });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ error: err.message });
   }
 });
 
@@ -88,7 +144,7 @@ containersRouter.post("/:id/start", async (req, res) => {
   }
 });
 
-containersRouter.post("/:id/stop", async (req, res) => {
+containersRouter.post("/:id/stop", blockIfSelf, async (req, res) => {
   try {
     await docker.getContainer(req.params.id).stop();
     res.json({ ok: true });
@@ -97,7 +153,7 @@ containersRouter.post("/:id/stop", async (req, res) => {
   }
 });
 
-containersRouter.post("/:id/restart", async (req, res) => {
+containersRouter.post("/:id/restart", blockIfSelf, async (req, res) => {
   try {
     await docker.getContainer(req.params.id).restart();
     res.json({ ok: true });
@@ -106,7 +162,7 @@ containersRouter.post("/:id/restart", async (req, res) => {
   }
 });
 
-containersRouter.post("/:id/kill", async (req, res) => {
+containersRouter.post("/:id/kill", blockIfSelf, async (req, res) => {
   try {
     await docker.getContainer(req.params.id).kill();
     res.json({ ok: true });
@@ -115,7 +171,7 @@ containersRouter.post("/:id/kill", async (req, res) => {
   }
 });
 
-containersRouter.post("/:id/pause", async (req, res) => {
+containersRouter.post("/:id/pause", blockIfSelf, async (req, res) => {
   try {
     await docker.getContainer(req.params.id).pause();
     res.json({ ok: true });
@@ -206,7 +262,7 @@ containersRouter.post("/", async (req, res) => {
   }
 });
 
-containersRouter.delete("/:id", async (req, res) => {
+containersRouter.delete("/:id", blockIfSelf, async (req, res) => {
   try {
     const force = req.query.force === "true";
     await docker.getContainer(req.params.id).remove({ force });
