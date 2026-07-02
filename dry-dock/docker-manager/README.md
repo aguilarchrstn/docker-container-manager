@@ -111,22 +111,45 @@ client/
   src/styles/global.css    every color is a CSS variable
 ```
 
+## v1.1 — what's new
+
+- **Login screen + user accounts.** SQLite-backed users, bcrypt password
+  hashes, JWT sessions. A default `admin` / `admin` account is seeded on
+  first boot — **change the password immediately** from the Administration
+  page or `POST /api/auth/change-password`.
+- **Dashboard.** Aggregated view of every configured environment: nodes
+  online/offline, container and image totals, per-node health and engine
+  version, one click to switch the active environment.
+- **Environments + wizard.** Manage one or more Docker endpoints. v1
+  ships with local socket support; the wizard also has slots for TCP/TLS,
+  SSH, and remote Dry Dock federation which the backend factory already
+  understands but which need connection material wired in per install.
+  Every existing route is now environment-aware via the `x-env-id` header.
+- **Access control.** Roles (`admin`, `editor`, `viewer` seeded, plus any
+  custom role you create), a permissions catalog (`envs.*`, `containers.*`,
+  `images.*`, `appearance.write`, `admin`), and teams for grouping users.
+  Every API route is now guarded by the matching permission.
+
+### Configuration
+
+Environment variables:
+
+| Variable          | Default                       | Purpose                        |
+| ----------------- | ----------------------------- | ------------------------------ |
+| `PORT`            | `4000`                        | HTTP port                      |
+| `AUTH_SECRET`     | dev placeholder — **change**  | JWT signing key                |
+| `DB_PATH`         | `server/data/app.db`          | SQLite database path           |
+| `DOCKER_SOCKET_PATH` | `/var/run/docker.sock`     | Default local env socket path  |
+
+The compose volume `drydock-data` already covers both `app.db` and the
+theme/presets JSON.
+
 ## What's not here yet
 
-This is intentionally an MVP. Natural next additions, roughly in order of
-how most people would want them:
+- TCP/TLS, SSH, and remote-node environment kinds are wired in the wizard
+  and factory but need real certificate/token plumbing per your setup.
+- Historical metrics.
+- Volumes / networks / Compose stack management.
+- Live-streaming logs (currently the last N lines on open).
+- Password reset flow (admins can reset from the Users tab).
 
-- **Auth** — a login screen and session cookie before anything else, if
-  you're exposing this beyond localhost/your LAN.
-- Volumes and networks management (list/create/remove).
-- Docker Compose stack support (deploy/tear down a `docker-compose.yml`
-  from the UI, like Portainer's "stacks").
-- Live-streaming logs (currently pulls the last 200 lines on open; a
-  websocket/SSE tail would make it live).
-- Historical metrics (current monitoring is live-only; nothing is persisted,
-  so there's no "CPU over the last 24 hours" view yet).
-- Multi-user theme profiles (right now the saved theme is global, not
-  per-account).
-- Multi-host support (talk to more than one Docker Engine).
-
-Happy to build out any of these next — just say which one.

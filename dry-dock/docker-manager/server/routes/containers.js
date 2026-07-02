@@ -1,9 +1,16 @@
 import { Router } from "express";
-import { docker } from "../lib/docker.js";
+import { withDocker } from "../lib/dockerFactory.js";
 import { isSelfContainer } from "../lib/self.js";
 import { summarizeStats } from "../lib/stats.js";
+import { requirePermission } from "../lib/auth.js";
 
 export const containersRouter = Router();
+
+// Every route needs a docker client bound to the caller's selected env.
+containersRouter.use(withDocker);
+
+const canRead = requirePermission("containers.read");
+const canWrite = requirePermission("containers.write");
 
 function formatPorts(ports = []) {
   return ports
@@ -11,11 +18,9 @@ function formatPorts(ports = []) {
     .map((p) => `${p.PublicPort}:${p.PrivatePort}/${p.Type}`);
 }
 
-// Blocks destructive actions against the Dry Dock container itself — taking
-// itself down mid-request would just orphan the UI with no way to recover
-// short of shelling into the host.
+// Blocks destructive actions against the Dry Dock container itself.
 async function blockIfSelf(req, res, next) {
-  if (await isSelfContainer(req.params.id)) {
+  if (await isSelfContainer(req.docker, req.params.id)) {
     return res.status(409).json({
       error: "This is the Dry Dock container itself — that action is blocked to avoid taking the app down.",
     });
@@ -23,20 +28,20 @@ async function blockIfSelf(req, res, next) {
   next();
 }
 
-containersRouter.get("/", async (req, res) => {
+containersRouter.get("/", canRead, async (req, res) => {
   try {
-    const list = await docker.listContainers({ all: true });
+    const list = await req.docker.listContainers({ all: true });
     const containers = await Promise.all(
       list.map(async (c) => ({
         id: c.Id,
         shortId: c.Id.slice(0, 12),
         name: (c.Names?.[0] || "").replace(/^\//, ""),
         image: c.Image,
-        state: c.State, // running, exited, paused, created...
-        status: c.Status, // "Up 3 hours", "Exited (0) 2 days ago"
+        state: c.State,
+        status: c.Status,
         ports: formatPorts(c.Ports),
         created: c.Created,
-        isSelf: await isSelfContainer(c.Id),
+        isSelf: await isSelfContainer(req.docker, c.Id),
       }))
     );
     res.json({ containers });
@@ -45,15 +50,13 @@ containersRouter.get("/", async (req, res) => {
   }
 });
 
-// Live metrics for every running container in one call, so the Monitoring
-// page can poll a single endpoint instead of one request per container.
-containersRouter.get("/stats/summary", async (req, res) => {
+containersRouter.get("/stats/summary", canRead, async (req, res) => {
   try {
-    const running = await docker.listContainers({ all: false });
+    const running = await req.docker.listContainers({ all: false });
     const stats = await Promise.all(
       running.map(async (c) => {
         try {
-          const raw = await docker.getContainer(c.Id).stats({ stream: false });
+          const raw = await req.docker.getContainer(c.Id).stats({ stream: false });
           return {
             id: c.Id,
             shortId: c.Id.slice(0, 12),
@@ -61,11 +64,7 @@ containersRouter.get("/stats/summary", async (req, res) => {
             ...summarizeStats(raw),
           };
         } catch (err) {
-          return {
-            id: c.Id,
-            name: (c.Names?.[0] || "").replace(/^\//, ""),
-            error: err.message,
-          };
+          return { id: c.Id, name: (c.Names?.[0] || "").replace(/^\//, ""), error: err.message };
         }
       })
     );
@@ -75,40 +74,30 @@ containersRouter.get("/stats/summary", async (req, res) => {
   }
 });
 
-containersRouter.get("/:id/stats", async (req, res) => {
+containersRouter.get("/:id/stats", canRead, async (req, res) => {
   try {
-    const raw = await docker.getContainer(req.params.id).stats({ stream: false });
+    const raw = await req.docker.getContainer(req.params.id).stats({ stream: false });
     res.json({ stats: summarizeStats(raw) });
   } catch (err) {
     res.status(err.statusCode || 500).json({ error: err.message });
   }
 });
 
-containersRouter.get("/:id", async (req, res) => {
+containersRouter.get("/:id", canRead, async (req, res) => {
   try {
-    const info = await docker.getContainer(req.params.id).inspect();
+    const info = await req.docker.getContainer(req.params.id).inspect();
     res.json({ container: info });
   } catch (err) {
     res.status(err.statusCode || 500).json({ error: err.message });
   }
 });
 
-containersRouter.get("/:id/logs", async (req, res) => {
+containersRouter.get("/:id/logs", canRead, async (req, res) => {
   try {
     const tail = Number(req.query.tail) || 200;
-    const container = docker.getContainer(req.params.id);
-    const buffer = await container.logs({
-      stdout: true,
-      stderr: true,
-      tail,
-      timestamps: false,
-    });
-
-    // Docker multiplexes stdout/stderr with an 8-byte header per frame when
-    // the container wasn't started with a TTY. Strip those header bytes so
-    // logs render as plain, readable text.
-    const text = demuxLogs(buffer);
-    res.json({ logs: text });
+    const container = req.docker.getContainer(req.params.id);
+    const buffer = await container.logs({ stdout: true, stderr: true, tail, timestamps: false });
+    res.json({ logs: demuxLogs(buffer) });
   } catch (err) {
     res.status(err.statusCode || 500).json({ error: err.message });
   }
@@ -116,13 +105,11 @@ containersRouter.get("/:id/logs", async (req, res) => {
 
 function demuxLogs(buffer) {
   if (!buffer || buffer.length === 0) return "";
-  // Heuristic: if it doesn't look like docker's stream framing, return as-is.
   let out = "";
   let offset = 0;
   while (offset + 8 <= buffer.length) {
     const type = buffer[offset];
     if (type > 2) {
-      // Not framed (TTY mode) — return the rest as plain text.
       out += buffer.slice(offset).toString("utf-8");
       break;
     }
@@ -135,78 +122,26 @@ function demuxLogs(buffer) {
   return out;
 }
 
-containersRouter.post("/:id/start", async (req, res) => {
+const lifecycle = (action, guard = null) => async (req, res) => {
   try {
-    await docker.getContainer(req.params.id).start();
+    await req.docker.getContainer(req.params.id)[action]();
     res.json({ ok: true });
   } catch (err) {
     res.status(err.statusCode || 500).json({ error: err.message });
   }
-});
+};
 
-containersRouter.post("/:id/stop", blockIfSelf, async (req, res) => {
+containersRouter.post("/:id/start", canWrite, lifecycle("start"));
+containersRouter.post("/:id/stop", canWrite, blockIfSelf, lifecycle("stop"));
+containersRouter.post("/:id/restart", canWrite, blockIfSelf, lifecycle("restart"));
+containersRouter.post("/:id/kill", canWrite, blockIfSelf, lifecycle("kill"));
+containersRouter.post("/:id/pause", canWrite, blockIfSelf, lifecycle("pause"));
+containersRouter.post("/:id/unpause", canWrite, lifecycle("unpause"));
+
+containersRouter.post("/", canWrite, async (req, res) => {
   try {
-    await docker.getContainer(req.params.id).stop();
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ error: err.message });
-  }
-});
-
-containersRouter.post("/:id/restart", blockIfSelf, async (req, res) => {
-  try {
-    await docker.getContainer(req.params.id).restart();
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ error: err.message });
-  }
-});
-
-containersRouter.post("/:id/kill", blockIfSelf, async (req, res) => {
-  try {
-    await docker.getContainer(req.params.id).kill();
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ error: err.message });
-  }
-});
-
-containersRouter.post("/:id/pause", blockIfSelf, async (req, res) => {
-  try {
-    await docker.getContainer(req.params.id).pause();
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ error: err.message });
-  }
-});
-
-containersRouter.post("/:id/unpause", async (req, res) => {
-  try {
-    await docker.getContainer(req.params.id).unpause();
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(err.statusCode || 500).json({ error: err.message });
-  }
-});
-
-// Creates (and by default starts) a new container.
-// Body: { image, name?, ports?: [{host, container, protocol}], env?: [{key, value}],
-//         command?, restartPolicy?: "no"|"always"|"unless-stopped"|"on-failure", start?: bool }
-containersRouter.post("/", async (req, res) => {
-  try {
-    const {
-      image,
-      name,
-      ports = [],
-      env = [],
-      command,
-      restartPolicy = "no",
-      start = true,
-    } = req.body || {};
-
-    if (!image || !image.trim()) {
-      return res.status(400).json({ error: "image is required" });
-    }
+    const { image, name, ports = [], env = [], command, restartPolicy = "no", start = true } = req.body || {};
+    if (!image || !image.trim()) return res.status(400).json({ error: "image is required" });
 
     const ExposedPorts = {};
     const PortBindings = {};
@@ -217,9 +152,7 @@ containersRouter.post("/", async (req, res) => {
       if (p.host) PortBindings[key] = [{ HostPort: String(p.host) }];
     }
 
-    const Env = env
-      .filter((e) => e.key && e.key.trim())
-      .map((e) => `${e.key.trim()}=${e.value ?? ""}`);
+    const Env = env.filter((e) => e.key && e.key.trim()).map((e) => `${e.key.trim()}=${e.value ?? ""}`);
 
     const createOpts = {
       Image: image.trim(),
@@ -229,43 +162,36 @@ containersRouter.post("/", async (req, res) => {
       ExposedPorts: Object.keys(ExposedPorts).length ? ExposedPorts : undefined,
       HostConfig: {
         PortBindings: Object.keys(PortBindings).length ? PortBindings : undefined,
-        RestartPolicy:
-          restartPolicy && restartPolicy !== "no"
-            ? { Name: restartPolicy }
-            : undefined,
+        RestartPolicy: restartPolicy && restartPolicy !== "no" ? { Name: restartPolicy } : undefined,
       },
     };
 
     let container;
     try {
-      container = await docker.createContainer(createOpts);
+      container = await req.docker.createContainer(createOpts);
     } catch (err) {
       if (err.statusCode === 404) {
-        // Image isn't present locally yet — pull it once, then retry.
-        const stream = await docker.pull(image.trim());
+        const stream = await req.docker.pull(image.trim());
         await new Promise((resolve, reject) => {
-          docker.modem.followProgress(stream, (pullErr) =>
-            pullErr ? reject(pullErr) : resolve()
-          );
+          req.docker.modem.followProgress(stream, (pullErr) => (pullErr ? reject(pullErr) : resolve()));
         });
-        container = await docker.createContainer(createOpts);
+        container = await req.docker.createContainer(createOpts);
       } else {
         throw err;
       }
     }
 
     if (start) await container.start();
-
     res.status(201).json({ id: container.id });
   } catch (err) {
     res.status(err.statusCode || 500).json({ error: err.message });
   }
 });
 
-containersRouter.delete("/:id", blockIfSelf, async (req, res) => {
+containersRouter.delete("/:id", canWrite, blockIfSelf, async (req, res) => {
   try {
     const force = req.query.force === "true";
-    await docker.getContainer(req.params.id).remove({ force });
+    await req.docker.getContainer(req.params.id).remove({ force });
     res.json({ ok: true });
   } catch (err) {
     res.status(err.statusCode || 500).json({ error: err.message });

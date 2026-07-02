@@ -1,8 +1,10 @@
 import { Router } from "express";
 import { randomUUID } from "crypto";
 import { readPresets, writePresets } from "../lib/store.js";
+import { requirePermission } from "../lib/auth.js";
 
 export const presetsRouter = Router();
+const canWrite = requirePermission("appearance.write");
 
 presetsRouter.get("/", async (req, res) => {
   try {
@@ -13,7 +15,7 @@ presetsRouter.get("/", async (req, res) => {
   }
 });
 
-presetsRouter.post("/", async (req, res) => {
+presetsRouter.post("/", canWrite, async (req, res) => {
   try {
     const { name, colors } = req.body || {};
     if (!name || !name.trim() || !colors) {
@@ -29,7 +31,7 @@ presetsRouter.post("/", async (req, res) => {
   }
 });
 
-presetsRouter.put("/:id", async (req, res) => {
+presetsRouter.put("/:id", canWrite, async (req, res) => {
   try {
     const { name, colors } = req.body || {};
     const presets = await readPresets();
@@ -47,7 +49,7 @@ presetsRouter.put("/:id", async (req, res) => {
   }
 });
 
-presetsRouter.delete("/:id", async (req, res) => {
+presetsRouter.delete("/:id", canWrite, async (req, res) => {
   try {
     const presets = await readPresets();
     const next = presets.filter((p) => p.id !== req.params.id);

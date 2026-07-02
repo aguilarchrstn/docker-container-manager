@@ -1,7 +1,9 @@
 import { Router } from "express";
 import { readTheme, writeTheme } from "../lib/store.js";
+import { requirePermission } from "../lib/auth.js";
 
 export const themeRouter = Router();
+const canWrite = requirePermission("appearance.write");
 
 themeRouter.get("/", async (req, res) => {
   try {
@@ -12,7 +14,7 @@ themeRouter.get("/", async (req, res) => {
   }
 });
 
-themeRouter.put("/", async (req, res) => {
+themeRouter.put("/", canWrite, async (req, res) => {
   try {
     const { theme } = req.body || {};
     if (!theme || !theme.colors) {
