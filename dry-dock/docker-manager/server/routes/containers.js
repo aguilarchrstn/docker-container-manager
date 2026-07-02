@@ -106,6 +106,106 @@ containersRouter.post("/:id/restart", async (req, res) => {
   }
 });
 
+containersRouter.post("/:id/kill", async (req, res) => {
+  try {
+    await docker.getContainer(req.params.id).kill();
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ error: err.message });
+  }
+});
+
+containersRouter.post("/:id/pause", async (req, res) => {
+  try {
+    await docker.getContainer(req.params.id).pause();
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ error: err.message });
+  }
+});
+
+containersRouter.post("/:id/unpause", async (req, res) => {
+  try {
+    await docker.getContainer(req.params.id).unpause();
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ error: err.message });
+  }
+});
+
+// Creates (and by default starts) a new container.
+// Body: { image, name?, ports?: [{host, container, protocol}], env?: [{key, value}],
+//         command?, restartPolicy?: "no"|"always"|"unless-stopped"|"on-failure", start?: bool }
+containersRouter.post("/", async (req, res) => {
+  try {
+    const {
+      image,
+      name,
+      ports = [],
+      env = [],
+      command,
+      restartPolicy = "no",
+      start = true,
+    } = req.body || {};
+
+    if (!image || !image.trim()) {
+      return res.status(400).json({ error: "image is required" });
+    }
+
+    const ExposedPorts = {};
+    const PortBindings = {};
+    for (const p of ports) {
+      if (!p.container) continue;
+      const key = `${p.container}/${p.protocol || "tcp"}`;
+      ExposedPorts[key] = {};
+      if (p.host) PortBindings[key] = [{ HostPort: String(p.host) }];
+    }
+
+    const Env = env
+      .filter((e) => e.key && e.key.trim())
+      .map((e) => `${e.key.trim()}=${e.value ?? ""}`);
+
+    const createOpts = {
+      Image: image.trim(),
+      name: name?.trim() || undefined,
+      Cmd: command?.trim() ? command.trim().split(/\s+/) : undefined,
+      Env: Env.length ? Env : undefined,
+      ExposedPorts: Object.keys(ExposedPorts).length ? ExposedPorts : undefined,
+      HostConfig: {
+        PortBindings: Object.keys(PortBindings).length ? PortBindings : undefined,
+        RestartPolicy:
+          restartPolicy && restartPolicy !== "no"
+            ? { Name: restartPolicy }
+            : undefined,
+      },
+    };
+
+    let container;
+    try {
+      container = await docker.createContainer(createOpts);
+    } catch (err) {
+      if (err.statusCode === 404) {
+        // Image isn't present locally yet — pull it once, then retry.
+        const stream = await docker.pull(image.trim());
+        await new Promise((resolve, reject) => {
+          docker.modem.followProgress(stream, (pullErr) =>
+            pullErr ? reject(pullErr) : resolve()
+          );
+        });
+        container = await docker.createContainer(createOpts);
+      } else {
+        throw err;
+      }
+    }
+
+    if (start) await container.start();
+
+    res.status(201).json({ id: container.id });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ error: err.message });
+  }
+});
+
 containersRouter.delete("/:id", async (req, res) => {
   try {
     const force = req.query.force === "true";

@@ -25,8 +25,20 @@ export const stopContainer = (id) =>
 export const restartContainer = (id) =>
   request(`/containers/${id}/restart`, { method: "POST" });
 
+export const killContainer = (id) =>
+  request(`/containers/${id}/kill`, { method: "POST" });
+
+export const pauseContainer = (id) =>
+  request(`/containers/${id}/pause`, { method: "POST" });
+
+export const resumeContainer = (id) =>
+  request(`/containers/${id}/unpause`, { method: "POST" });
+
 export const removeContainer = (id, force = false) =>
   request(`/containers/${id}?force=${force}`, { method: "DELETE" });
+
+export const createContainer = (payload) =>
+  request("/containers", { method: "POST", body: JSON.stringify(payload) });
 
 export const listImages = () => request("/images").then((r) => r.images);
 

@@ -4,17 +4,39 @@ import {
   startContainer,
   stopContainer,
   restartContainer,
+  killContainer,
+  pauseContainer,
+  resumeContainer,
   removeContainer,
 } from "../api.js";
 import StatusDot from "../components/StatusDot.jsx";
 import LogsModal from "../components/LogsModal.jsx";
+import CreateContainerModal from "../components/CreateContainerModal.jsx";
+
+const BULK_ACTIONS = [
+  { key: "start", label: "Start", fn: startContainer, variant: "btn-primary" },
+  { key: "stop", label: "Stop", fn: stopContainer },
+  { key: "restart", label: "Restart", fn: restartContainer },
+  { key: "pause", label: "Pause", fn: pauseContainer },
+  { key: "resume", label: "Resume", fn: resumeContainer },
+  { key: "kill", label: "Kill", fn: killContainer, variant: "btn-danger" },
+  {
+    key: "remove",
+    label: "Remove",
+    fn: (id) => removeContainer(id, true),
+    variant: "btn-danger",
+    confirm: (n) => `Remove ${n} container${n > 1 ? "s" : ""}? This cannot be undone.`,
+  },
+];
 
 export default function Containers() {
   const [containers, setContainers] = useState([]);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [busyId, setBusyId] = useState(null);
+  const [selected, setSelected] = useState(() => new Set());
+  const [runningAction, setRunningAction] = useState(null);
   const [logsTarget, setLogsTarget] = useState(null);
+  const [showCreate, setShowCreate] = useState(false);
 
   const refresh = useCallback(() => {
     return listContainers()
@@ -31,23 +53,48 @@ export default function Containers() {
     return () => clearInterval(interval);
   }, [refresh]);
 
-  async function runAction(id, action) {
-    setBusyId(id);
-    try {
-      if (action === "start") await startContainer(id);
-      if (action === "stop") await stopContainer(id);
-      if (action === "restart") await restartContainer(id);
-      if (action === "remove") {
-        if (!confirm("Remove this container? This cannot be undone.")) return;
-        await removeContainer(id, true);
-      }
-      await refresh();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setBusyId(null);
-    }
+  // Drop selections for containers that no longer exist (removed, etc.)
+  useEffect(() => {
+    setSelected((prev) => {
+      const ids = new Set(containers.map((c) => c.id));
+      const next = new Set([...prev].filter((id) => ids.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [containers]);
+
+  const allSelected = containers.length > 0 && selected.size === containers.length;
+
+  function toggleAll() {
+    setSelected(allSelected ? new Set() : new Set(containers.map((c) => c.id)));
   }
+
+  function toggleOne(id) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  async function runBulk(action) {
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    if (action.confirm && !confirm(action.confirm(ids.length))) return;
+
+    setRunningAction(action.key);
+    const results = await Promise.allSettled(ids.map((id) => action.fn(id)));
+    const failures = results.filter((r) => r.status === "rejected");
+    if (failures.length) {
+      setError(`${action.label} failed for ${failures.length} of ${ids.length} container(s).`);
+    } else {
+      setError(null);
+    }
+    await refresh();
+    if (action.key === "remove" && !failures.length) setSelected(new Set());
+    setRunningAction(null);
+  }
+
+  const selectionCount = selected.size;
 
   if (loading) return <p className="status-label">Loading containers…</p>;
 
@@ -55,21 +102,53 @@ export default function Containers() {
     <div>
       <div className="section-heading">
         <h2>Containers</h2>
-        <button className="btn btn-sm" onClick={refresh}>Refresh</button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="btn btn-sm" onClick={refresh}>Refresh</button>
+          <button className="btn btn-sm btn-primary" onClick={() => setShowCreate(true)}>
+            + Add container
+          </button>
+        </div>
       </div>
 
       {error && <div className="banner error">{error}</div>}
+
+      {selectionCount > 0 && (
+        <div className="bulk-toolbar">
+          <span className="count">{selectionCount} selected</span>
+          {BULK_ACTIONS.map((action) => (
+            <button
+              key={action.key}
+              className={`btn btn-sm ${action.variant || ""}`}
+              disabled={runningAction !== null}
+              onClick={() => runBulk(action)}
+            >
+              {runningAction === action.key ? "…" : action.label}
+            </button>
+          ))}
+          <span className="spacer" />
+          <button className="btn btn-sm btn-ghost" onClick={() => setSelected(new Set())}>
+            Clear selection
+          </button>
+        </div>
+      )}
 
       {containers.length === 0 ? (
         <div className="manifest">
           <div className="empty-state">
             <div className="title">No containers found</div>
-            Run something with Docker and it'll show up here.
+            Add one with the button above, or run something with Docker and it'll show up here.
           </div>
         </div>
       ) : (
         <div className="manifest">
           <div className="manifest-header">
+            <input
+              type="checkbox"
+              className="row-checkbox"
+              checked={allSelected}
+              onChange={toggleAll}
+              aria-label="Select all containers"
+            />
             <span />
             <span>Name</span>
             <span>Image</span>
@@ -78,51 +157,22 @@ export default function Containers() {
             <span></span>
           </div>
           {containers.map((c) => (
-            <div className="manifest-row" key={c.id}>
+            <div className={`manifest-row ${selected.has(c.id) ? "selected" : ""}`} key={c.id}>
+              <input
+                type="checkbox"
+                className="row-checkbox"
+                checked={selected.has(c.id)}
+                onChange={() => toggleOne(c.id)}
+                aria-label={`Select ${c.name}`}
+              />
               <StatusDot state={c.state} />
               <span className="name">{c.name}</span>
               <span className="mono">{c.image}</span>
               <span className="mono">{c.ports.join(", ") || "—"}</span>
               <span className="status-label">{c.status}</span>
               <div className="manifest-actions">
-                <button
-                  className="btn btn-sm"
-                  onClick={() => setLogsTarget(c)}
-                >
+                <button className="btn btn-sm" onClick={() => setLogsTarget(c)}>
                   Logs
-                </button>
-                {c.state === "running" ? (
-                  <>
-                    <button
-                      className="btn btn-sm"
-                      disabled={busyId === c.id}
-                      onClick={() => runAction(c.id, "restart")}
-                    >
-                      Restart
-                    </button>
-                    <button
-                      className="btn btn-sm"
-                      disabled={busyId === c.id}
-                      onClick={() => runAction(c.id, "stop")}
-                    >
-                      Stop
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    className="btn btn-sm btn-primary"
-                    disabled={busyId === c.id}
-                    onClick={() => runAction(c.id, "start")}
-                  >
-                    Start
-                  </button>
-                )}
-                <button
-                  className="btn btn-sm btn-danger"
-                  disabled={busyId === c.id}
-                  onClick={() => runAction(c.id, "remove")}
-                >
-                  Remove
                 </button>
               </div>
             </div>
@@ -132,6 +182,16 @@ export default function Containers() {
 
       {logsTarget && (
         <LogsModal container={logsTarget} onClose={() => setLogsTarget(null)} />
+      )}
+
+      {showCreate && (
+        <CreateContainerModal
+          onClose={() => setShowCreate(false)}
+          onCreated={() => {
+            setShowCreate(false);
+            refresh();
+          }}
+        />
       )}
     </div>
   );
