@@ -10,9 +10,6 @@ RUN npm run build
 FROM node:20-alpine
 WORKDIR /app
 
-# better-sqlite3 compiles a native module at install time.
-RUN apk add --no-cache python3 make g++
-
 COPY server/package*.json ./server/
 RUN cd server && npm install --omit=dev
 
@@ -20,8 +17,6 @@ COPY server/ ./server/
 COPY --from=client-build /app/client/dist ./client/dist
 
 ENV PORT=4000
-# Change AUTH_SECRET on every deployment.
-ENV AUTH_SECRET=change-me-in-production
 EXPOSE 4000
 
 WORKDIR /app/server

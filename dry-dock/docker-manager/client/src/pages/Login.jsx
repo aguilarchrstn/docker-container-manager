@@ -1,20 +1,21 @@
 import { useState } from "react";
-import { useAuth } from "../auth/AuthContext.jsx";
+import { useAuth } from "../context/AuthContext.jsx";
 
 export default function Login() {
-  const { signIn } = useAuth();
-  const [username, setUsername] = useState("admin");
-  const [password, setPassword] = useState("admin");
-  const [busy, setBusy] = useState(false);
+  const { login } = useAuth();
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
 
-  async function onSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault();
-    setBusy(true); setError(null);
+    setBusy(true);
+    setError(null);
     try {
-      await signIn(username, password);
+      await login(username, password);
     } catch (err) {
-      setError(err.message);
+      setError(err.message || "Login failed");
     } finally {
       setBusy(false);
     }
@@ -22,23 +23,44 @@ export default function Login() {
 
   return (
     <div className="login-shell">
-      <form className="login-card" onSubmit={onSubmit}>
-        <div className="login-brand"><span className="mark" /> Dry Dock</div>
-        <h2>Sign in</h2>
-        <p className="subtitle">Manage your Docker environments</p>
+      <form className="login-card" onSubmit={handleSubmit}>
+        <div className="login-brand">
+          <span className="mark" />
+          Dry Dock
+        </div>
+        <div className="login-subtitle">Sign in to manage your containers</div>
 
-        <label>Username</label>
-        <input value={username} onChange={(e) => setUsername(e.target.value)} autoFocus autoComplete="username" />
+        {error && <div className="banner error">{error}</div>}
 
-        <label>Password</label>
-        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
+        <label className="field">
+          <span>Username</span>
+          <input
+            autoFocus
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            placeholder="admin"
+            autoComplete="username"
+          />
+        </label>
 
-        {error && <div className="login-error">{error}</div>}
+        <label className="field">
+          <span>Password</span>
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="••••••••"
+            autoComplete="current-password"
+          />
+        </label>
 
-        <button type="submit" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button>
+        <button className="btn btn-primary btn-block" type="submit" disabled={busy}>
+          {busy ? "Signing in…" : "Sign in"}
+        </button>
 
         <div className="login-hint">
-          Default admin: <code>admin</code> / <code>admin</code> — change this right after first login.
+          First time here? Default login is <code>admin</code> / <code>admin</code> — you'll
+          be asked to change the password after signing in.
         </div>
       </form>
     </div>

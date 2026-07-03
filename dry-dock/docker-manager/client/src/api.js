@@ -1,91 +1,102 @@
-const TOKEN_KEY = "drydock.token";
-const ENV_KEY = "drydock.env";
+// Tracks which node (environment) container/image/monitoring calls target.
+// A module-level value (rather than threading it through every component)
+// keeps every existing page — Containers.jsx, Images.jsx, Monitoring.jsx —
+// working unchanged; they already call listContainers() etc. with no args.
+let currentEnvironmentId = "local";
 
-export const auth = {
-  getToken: () => localStorage.getItem(TOKEN_KEY),
-  setToken: (t) => (t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY)),
-};
+export function setCurrentEnvironment(id) {
+  currentEnvironmentId = id || "local";
+}
 
-export const env = {
-  getId: () => localStorage.getItem(ENV_KEY),
-  setId: (id) => (id ? localStorage.setItem(ENV_KEY, id) : localStorage.removeItem(ENV_KEY)),
-};
+export function getCurrentEnvironment() {
+  return currentEnvironmentId;
+}
+
+function withEnv(path) {
+  const sep = path.includes("?") ? "&" : "?";
+  return `${path}${sep}env=${encodeURIComponent(currentEnvironmentId)}`;
+}
+
+export class UnauthorizedError extends Error {}
 
 async function request(path, options = {}) {
-  const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
-  const token = auth.getToken();
-  if (token) headers.Authorization = `Bearer ${token}`;
-  const envId = env.getId();
-  if (envId) headers["x-env-id"] = envId;
-
-  const res = await fetch(`/api${path}`, { ...options, headers });
-  if (res.status === 401 && !path.startsWith("/auth")) {
-    auth.setToken(null);
-    window.dispatchEvent(new Event("drydock:signout"));
+  const res = await fetch(`/api${path}`, {
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    ...options,
+  });
+  if (res.status === 401) {
+    throw new UnauthorizedError("Not authenticated");
   }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error || `Request failed: ${res.status}`);
   }
-  if (res.status === 204) return null;
   return res.json();
 }
 
-// ---- Auth ----
+// ---------- auth ----------
+
 export const login = (username, password) =>
-  request("/auth/login", { method: "POST", body: JSON.stringify({ username, password }) });
-export const me = () => request("/auth/me").then((r) => r.user);
+  request("/auth/login", { method: "POST", body: JSON.stringify({ username, password }) }).then(
+    (r) => r.user
+  );
+
+export const logout = () => request("/auth/logout", { method: "POST" });
+
+export const getMe = () => request("/auth/me");
+
 export const changePassword = (currentPassword, newPassword) =>
-  request("/auth/change-password", { method: "POST", body: JSON.stringify({ currentPassword, newPassword }) });
+  request("/auth/change-password", {
+    method: "POST",
+    body: JSON.stringify({ currentPassword, newPassword }),
+  });
 
-// ---- Dashboard ----
-export const getDashboard = () => request("/dashboard");
+// ---------- containers (environment-scoped) ----------
 
-// ---- Environments ----
-export const listEnvironments = () => request("/environments").then((r) => r.environments);
-export const pingEnvironment = (id) => request(`/environments/${id}/ping`);
-export const createEnvironment = (payload) =>
-  request("/environments", { method: "POST", body: JSON.stringify(payload) }).then((r) => r.environment);
-export const updateEnvironment = (id, payload) =>
-  request(`/environments/${id}`, { method: "PUT", body: JSON.stringify(payload) }).then((r) => r.environment);
-export const deleteEnvironment = (id) => request(`/environments/${id}`, { method: "DELETE" });
-export const testEnvironment = (payload) =>
-  request("/environments/test", { method: "POST", body: JSON.stringify(payload) });
+export const listContainers = () => request(withEnv("/containers")).then((r) => r.containers);
 
-// ---- Containers ----
-export const listContainers = () => request("/containers").then((r) => r.containers);
 export const getContainerLogs = (id, tail = 200) =>
-  request(`/containers/${id}/logs?tail=${tail}`).then((r) => r.logs);
-export const startContainer = (id) => request(`/containers/${id}/start`, { method: "POST" });
-export const stopContainer = (id) => request(`/containers/${id}/stop`, { method: "POST" });
-export const restartContainer = (id) => request(`/containers/${id}/restart`, { method: "POST" });
-export const killContainer = (id) => request(`/containers/${id}/kill`, { method: "POST" });
-export const pauseContainer = (id) => request(`/containers/${id}/pause`, { method: "POST" });
-export const resumeContainer = (id) => request(`/containers/${id}/unpause`, { method: "POST" });
-export const removeContainer = (id, force = false) =>
-  request(`/containers/${id}?force=${force}`, { method: "DELETE" });
-export const createContainer = (payload) =>
-  request("/containers", { method: "POST", body: JSON.stringify(payload) });
-export const getContainerStats = (id) => request(`/containers/${id}/stats`).then((r) => r.stats);
-export const getAllContainerStats = () => request("/containers/stats/summary").then((r) => r.stats);
+  request(withEnv(`/containers/${id}/logs?tail=${tail}`)).then((r) => r.logs);
 
-// ---- Images ----
-export const listImages = () => request("/images").then((r) => r.images);
+export const startContainer = (id) => request(withEnv(`/containers/${id}/start`), { method: "POST" });
+
+export const stopContainer = (id) => request(withEnv(`/containers/${id}/stop`), { method: "POST" });
+
+export const restartContainer = (id) => request(withEnv(`/containers/${id}/restart`), { method: "POST" });
+
+export const killContainer = (id) => request(withEnv(`/containers/${id}/kill`), { method: "POST" });
+
+export const pauseContainer = (id) => request(withEnv(`/containers/${id}/pause`), { method: "POST" });
+
+export const resumeContainer = (id) => request(withEnv(`/containers/${id}/unpause`), { method: "POST" });
+
+export const removeContainer = (id, force = false) =>
+  request(withEnv(`/containers/${id}?force=${force}`), { method: "DELETE" });
+
+export const createContainer = (payload) =>
+  request(withEnv("/containers"), { method: "POST", body: JSON.stringify(payload) });
+
+export const getContainerStats = (id) => request(withEnv(`/containers/${id}/stats`)).then((r) => r.stats);
+
+export const getAllContainerStats = () =>
+  request(withEnv("/containers/stats/summary")).then((r) => r.stats);
+
+// ---------- images (environment-scoped) ----------
+
+export const listImages = () => request(withEnv("/images")).then((r) => r.images);
+
 export const removeImage = (id, force = false) =>
-  request(`/images/${id}?force=${force}`, { method: "DELETE" });
+  request(withEnv(`/images/${id}?force=${force}`), { method: "DELETE" });
 
 export async function pullImage(image, onProgress) {
-  const token = auth.getToken();
-  const envId = env.getId();
-  const res = await fetch("/api/images/pull", {
+  const res = await fetch(withEnv("/api/images/pull"), {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(envId ? { "x-env-id": envId } : {}),
-    },
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ image }),
   });
+  if (!res.ok) throw new Error(`Pull failed: ${res.status}`);
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -97,40 +108,71 @@ export async function pullImage(image, onProgress) {
     buffer = lines.pop();
     for (const line of lines) {
       if (!line.trim()) continue;
-      try { onProgress?.(JSON.parse(line)); } catch { /* ignore */ }
+      try {
+        onProgress?.(JSON.parse(line));
+      } catch {
+        // ignore malformed progress line
+      }
     }
   }
 }
 
-// ---- Theme / presets ----
+// ---------- theme / presets ----------
+
 export const getTheme = () => request("/theme").then((r) => r.theme);
-export const saveTheme = (theme) =>
-  request("/theme", { method: "PUT", body: JSON.stringify({ theme }) });
+
+export const saveTheme = (theme) => request("/theme", { method: "PUT", body: JSON.stringify({ theme }) });
+
 export const listCustomPresets = () => request("/presets").then((r) => r.presets);
+
 export const createCustomPreset = (preset) =>
   request("/presets", { method: "POST", body: JSON.stringify(preset) }).then((r) => r.preset);
+
 export const deleteCustomPreset = (id) => request(`/presets/${id}`, { method: "DELETE" });
 
-// ---- Admin ----
-export const adminListUsers = () => request("/admin/users").then((r) => r.users);
-export const adminCreateUser = (payload) =>
-  request("/admin/users", { method: "POST", body: JSON.stringify(payload) }).then((r) => r.user);
-export const adminUpdateUser = (id, payload) =>
-  request(`/admin/users/${id}`, { method: "PUT", body: JSON.stringify(payload) });
-export const adminDeleteUser = (id) => request(`/admin/users/${id}`, { method: "DELETE" });
+// ---------- dashboard ----------
 
-export const adminListRoles = () => request("/admin/roles").then((r) => r.roles);
-export const adminCreateRole = (payload) =>
-  request("/admin/roles", { method: "POST", body: JSON.stringify(payload) });
-export const adminUpdateRole = (id, payload) =>
-  request(`/admin/roles/${id}`, { method: "PUT", body: JSON.stringify(payload) });
-export const adminDeleteRole = (id) => request(`/admin/roles/${id}`, { method: "DELETE" });
+export const getDashboard = () => request("/dashboard").then((r) => r.environments);
 
-export const adminListPermissions = () => request("/admin/permissions").then((r) => r.permissions);
+// ---------- environments (nodes) ----------
 
-export const adminListTeams = () => request("/admin/teams").then((r) => r.teams);
-export const adminCreateTeam = (payload) =>
-  request("/admin/teams", { method: "POST", body: JSON.stringify(payload) });
-export const adminUpdateTeam = (id, payload) =>
-  request(`/admin/teams/${id}`, { method: "PUT", body: JSON.stringify(payload) });
-export const adminDeleteTeam = (id) => request(`/admin/teams/${id}`, { method: "DELETE" });
+export const listEnvironments = () => request("/environments").then((r) => r.environments);
+
+export const testEnvironmentConnection = (type, config) =>
+  request("/environments/test", { method: "POST", body: JSON.stringify({ type, config }) });
+
+export const createEnvironment = (payload) =>
+  request("/environments", { method: "POST", body: JSON.stringify(payload) }).then((r) => r.environment);
+
+export const updateEnvironment = (id, payload) =>
+  request(`/environments/${id}`, { method: "PUT", body: JSON.stringify(payload) }).then((r) => r.environment);
+
+export const deleteEnvironment = (id) => request(`/environments/${id}`, { method: "DELETE" });
+
+export const getAgentToken = () => request("/environments/agent-token").then((r) => r.agentToken);
+
+export const regenerateAgentToken = () =>
+  request("/environments/agent-token/regenerate", { method: "POST" }).then((r) => r.agentToken);
+
+// ---------- access control: users / teams / roles ----------
+
+export const listUsers = () => request("/users").then((r) => r.users);
+export const createUser = (payload) =>
+  request("/users", { method: "POST", body: JSON.stringify(payload) }).then((r) => r.user);
+export const updateUser = (id, payload) =>
+  request(`/users/${id}`, { method: "PUT", body: JSON.stringify(payload) }).then((r) => r.user);
+export const deleteUser = (id) => request(`/users/${id}`, { method: "DELETE" });
+
+export const listTeams = () => request("/teams").then((r) => r.teams);
+export const createTeam = (payload) =>
+  request("/teams", { method: "POST", body: JSON.stringify(payload) }).then((r) => r.team);
+export const updateTeam = (id, payload) =>
+  request(`/teams/${id}`, { method: "PUT", body: JSON.stringify(payload) }).then((r) => r.team);
+export const deleteTeam = (id) => request(`/teams/${id}`, { method: "DELETE" });
+
+export const listRoles = () => request("/roles");
+export const createRole = (payload) =>
+  request("/roles", { method: "POST", body: JSON.stringify(payload) }).then((r) => r.role);
+export const updateRole = (id, payload) =>
+  request(`/roles/${id}`, { method: "PUT", body: JSON.stringify(payload) }).then((r) => r.role);
+export const deleteRole = (id) => request(`/roles/${id}`, { method: "DELETE" });

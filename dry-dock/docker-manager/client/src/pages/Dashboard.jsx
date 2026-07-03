@@ -1,88 +1,154 @@
-import { useEffect, useState } from "react";
-import { getDashboard } from "../api.js";
-import { useEnv } from "../env/EnvContext.jsx";
+import { useCallback, useEffect, useState } from "react";
+import { getDashboard, deleteEnvironment, listEnvironments } from "../api.js";
+import EnvironmentWizard from "../components/EnvironmentWizard.jsx";
+import { useAuth } from "../context/AuthContext.jsx";
+import { PERMISSIONS } from "../lib/permissions.js";
 
-export default function Dashboard() {
-  const { setCurrentId } = useEnv();
-  const [data, setData] = useState(null);
+function formatBytes(n) {
+  if (!n) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let i = 0;
+  let v = n;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v.toFixed(v >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+const TYPE_LABELS = {
+  local: "Local socket",
+  standalone: "Standalone node",
+  agent: "Self-hosted manager",
+};
+
+export default function Dashboard({ onSwitchEnvironment, onEnvironmentsChanged }) {
+  const { can } = useAuth();
+  const [cards, setCards] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [wizardOpen, setWizardOpen] = useState(false);
 
-  useEffect(() => {
-    let alive = true;
-    async function load() {
-      try {
-        const d = await getDashboard();
-        if (alive) setData(d);
-      } catch (err) {
-        if (alive) setError(err.message);
-      }
-    }
-    load();
-    const t = setInterval(load, 10000);
-    return () => { alive = false; clearInterval(t); };
+  const refresh = useCallback(() => {
+    return getDashboard()
+      .then((data) => {
+        setCards(data);
+        setError(null);
+      })
+      .catch((err) => setError(err.message));
   }, []);
 
-  if (error) return <div className="empty">Failed to load dashboard: {error}</div>;
-  if (!data) return <div className="empty">Loading…</div>;
+  useEffect(() => {
+    refresh().finally(() => setLoading(false));
+    const interval = setInterval(refresh, 10000);
+    return () => clearInterval(interval);
+  }, [refresh]);
 
-  const { nodes, totals } = data;
-
-  return (
-    <div className="dashboard">
-      <div className="stat-grid">
-        <StatCard label="Nodes online" value={totals.nodesOnline} accent="ok" />
-        <StatCard label="Nodes offline" value={totals.nodesOffline} accent={totals.nodesOffline ? "warn" : undefined} />
-        <StatCard label="Containers" value={totals.containers} sublabel={`${totals.containersRunning} running`} />
-        <StatCard label="Images" value={totals.images} />
-      </div>
-
-      <h2 className="section-title">Environments</h2>
-      <div className="node-grid">
-        {nodes.map((n) => (
-          <div key={n.id} className={`node-card ${n.ok ? "ok" : "down"}`}>
-            <div className="node-head">
-              <div>
-                <div className="node-name">
-                  {n.name} {n.isDefault && <span className="tag">default</span>}
-                </div>
-                <div className="node-kind">{kindLabel(n.kind)}</div>
-              </div>
-              <span className={`dot ${n.ok ? "green" : "red"}`} />
-            </div>
-            {n.ok ? (
-              <>
-                <div className="node-row"><span>Containers</span><b>{n.containersRunning}/{n.containers}</b></div>
-                <div className="node-row"><span>Images</span><b>{n.images}</b></div>
-                <div className="node-row"><span>Engine</span><b>{n.serverVersion}</b></div>
-                <div className="node-row"><span>OS</span><b>{n.operatingSystem}</b></div>
-              </>
-            ) : (
-              <div className="node-error">{n.error || "Unreachable"}</div>
-            )}
-            <button className="node-select" onClick={() => setCurrentId(n.id)}>Use this environment</button>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function StatCard({ label, value, sublabel, accent }) {
-  return (
-    <div className={`stat-card ${accent || ""}`}>
-      <div className="stat-value">{value}</div>
-      <div className="stat-label">{label}</div>
-      {sublabel && <div className="stat-sub">{sublabel}</div>}
-    </div>
-  );
-}
-
-function kindLabel(kind) {
-  switch (kind) {
-    case "local": return "Local Docker socket";
-    case "tcp": return "Docker over TCP";
-    case "ssh": return "Docker over SSH";
-    case "remote_node": return "Remote Dry Dock node";
-    default: return kind;
+  async function handleRemove(id, name) {
+    if (!confirm(`Remove environment "${name}"? Dry Dock will stop tracking it.`)) return;
+    try {
+      await deleteEnvironment(id);
+      refresh();
+      onEnvironmentsChanged?.();
+    } catch (err) {
+      alert(err.message);
+    }
   }
+
+  const canManage = can(PERMISSIONS.ENVIRONMENTS_MANAGE);
+
+  return (
+    <div>
+      <div className="section-heading">
+        <h2>Environments</h2>
+        {canManage && (
+          <button className="btn btn-primary btn-sm" onClick={() => setWizardOpen(true)}>
+            + Add environment
+          </button>
+        )}
+      </div>
+
+      {error && <div className="banner error">{error}</div>}
+      {loading ? (
+        <div className="empty-state">
+          <div className="title">Loading environments…</div>
+        </div>
+      ) : cards.length === 0 ? (
+        <div className="empty-state">
+          <div className="title">No environments yet</div>
+          <div>Add one to start managing containers on another node.</div>
+        </div>
+      ) : (
+        <div className="env-card-grid">
+          {cards.map((card) => (
+            <div className="env-card" key={card.id}>
+              <div className="env-card-top">
+                <span className={`led ${card.online ? "running" : "dead"}`} />
+                <div className="env-card-name">{card.name}</div>
+                {!card.id.startsWith("local") && canManage && (
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => handleRemove(card.id, card.name)}
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+              <div className="env-card-type">{TYPE_LABELS[card.type] || card.type}</div>
+              {card.description && <div className="field-hint">{card.description}</div>}
+
+              {card.online ? (
+                <div className="stat-grid" style={{ marginTop: 12 }}>
+                  <div className="stat-tile">
+                    <div className="stat-tile-label">Containers</div>
+                    <div className="stat-tile-value">
+                      {card.info?.containersRunning ?? "—"}
+                      <span className="stat-tile-sub"> / {card.info?.containers ?? "—"}</span>
+                    </div>
+                  </div>
+                  <div className="stat-tile">
+                    <div className="stat-tile-label">Images</div>
+                    <div className="stat-tile-value">{card.info?.images ?? "—"}</div>
+                  </div>
+                  <div className="stat-tile">
+                    <div className="stat-tile-label">CPUs</div>
+                    <div className="stat-tile-value">{card.info?.ncpu ?? "—"}</div>
+                  </div>
+                  <div className="stat-tile">
+                    <div className="stat-tile-label">Memory</div>
+                    <div className="stat-tile-value">{formatBytes(card.info?.memTotal)}</div>
+                  </div>
+                </div>
+              ) : (
+                <div className="banner error" style={{ marginTop: 12 }}>
+                  {card.error || "Offline"}
+                </div>
+              )}
+
+              {card.online && (
+                <button
+                  className="btn btn-ghost btn-sm"
+                  style={{ marginTop: 12 }}
+                  onClick={() => onSwitchEnvironment(card.id)}
+                >
+                  Manage this node →
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {wizardOpen && (
+        <EnvironmentWizard
+          onClose={() => setWizardOpen(false)}
+          onCreated={() => {
+            setWizardOpen(false);
+            refresh();
+            onEnvironmentsChanged?.();
+          }}
+        />
+      )}
+    </div>
+  );
 }

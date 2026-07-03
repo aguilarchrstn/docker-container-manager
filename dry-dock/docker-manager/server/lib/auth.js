@@ -1,38 +1,65 @@
+import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { getFullUser, getUserPermissions } from "./db.js";
+import { randomUUID, randomBytes } from "crypto";
+import { readSettings, writeSettings } from "./store.js";
 
-const SECRET = process.env.AUTH_SECRET || "dev-insecure-change-me";
-const TOKEN_TTL = "7d";
+export const SESSION_COOKIE = "drydock_session";
 
-export function signToken(user) {
-  return jwt.sign({ sub: user.id, username: user.username }, SECRET, { expiresIn: TOKEN_TTL });
+// The JWT signing secret is generated once on first boot and persisted to
+// server/data/settings.json (mounted volume), so sessions survive restarts
+// but a fresh install never ships with a predictable secret.
+let cachedSecret;
+export async function getJwtSecret() {
+  if (cachedSecret) return cachedSecret;
+  const settings = await readSettings();
+  if (!settings.jwtSecret) {
+    settings.jwtSecret = randomBytes(48).toString("hex");
+    await writeSettings(settings);
+  }
+  cachedSecret = settings.jwtSecret;
+  return cachedSecret;
 }
 
-function readToken(req) {
-  const h = req.headers.authorization || "";
-  if (h.startsWith("Bearer ")) return h.slice(7);
-  return null;
+// The agent token authenticates OTHER Dry Dock instances that add this one
+// as a remote "agent" environment — separate from user login entirely.
+export async function getAgentToken() {
+  const settings = await readSettings();
+  if (!settings.agentToken) {
+    settings.agentToken = randomBytes(24).toString("hex");
+    await writeSettings(settings);
+  }
+  return settings.agentToken;
 }
 
-export function requireAuth(req, res, next) {
-  const token = readToken(req);
-  if (!token) return res.status(401).json({ error: "Not authenticated" });
+export async function regenerateAgentToken() {
+  const settings = await readSettings();
+  settings.agentToken = randomBytes(24).toString("hex");
+  await writeSettings(settings);
+  return settings.agentToken;
+}
+
+export async function hashPassword(plain) {
+  return bcrypt.hash(plain, 10);
+}
+
+export async function verifyPassword(plain, hash) {
+  return bcrypt.compare(plain, hash);
+}
+
+export async function signSession(user) {
+  const secret = await getJwtSecret();
+  return jwt.sign({ sub: user.id }, secret, { expiresIn: "7d" });
+}
+
+export async function verifySession(token) {
+  const secret = await getJwtSecret();
   try {
-    const payload = jwt.verify(token, SECRET);
-    const user = getFullUser(payload.sub);
-    if (!user || user.disabled) return res.status(401).json({ error: "Not authenticated" });
-    req.user = user;
-    next();
+    return jwt.verify(token, secret);
   } catch {
-    res.status(401).json({ error: "Invalid or expired token" });
+    return null;
   }
 }
 
-export function requirePermission(perm) {
-  return (req, res, next) => {
-    if (!req.user) return res.status(401).json({ error: "Not authenticated" });
-    const perms = req.user.permissions || getUserPermissions(req.user.id);
-    if (perms.includes("admin") || perms.includes(perm)) return next();
-    res.status(403).json({ error: `Missing permission: ${perm}` });
-  };
+export function newId(prefix) {
+  return `${prefix}-${randomUUID()}`;
 }

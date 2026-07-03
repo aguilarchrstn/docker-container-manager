@@ -5,15 +5,29 @@ simple enough to actually read the code, and themeable the way Mattermost
 lets you pick every UI color.
 
 - **Backend:** Node.js + Express, talks to the Docker Engine via
-  [dockerode](https://github.com/apocas/dockerode) over `/var/run/docker.sock`.
+  [dockerode](https://github.com/apocas/dockerode) over `/var/run/docker.sock`
+  (or over TCP for remote nodes).
 - **Frontend:** React + Vite, no CSS framework — just CSS variables so the
   theme picker can restyle the whole app live.
 - **Features:**
+  - **Login & access control**: session-based auth (JWT in an httpOnly
+    cookie), with Users, Teams, and Roles/Permissions. Ships with a default
+    `admin` / `admin` account that's forced to set a real password on first
+    login. Every route is permission-gated — see "Access control" below.
+  - **Dashboard**: a card per environment (node) Dry Dock manages, showing
+    online/offline status, Docker version, container/image counts, CPU
+    count, and memory — refreshed every 10s.
+  - **Environments (multi-node)**: an **environment wizard** to connect Dry
+    Dock to more than just its own host — either a **standalone Docker
+    node** (direct TCP/SSH-tunneled connection to another Docker Engine) or
+    a **self-hosted Dry Dock manager** (proxying API calls through another
+    Dry Dock instance, which can itself be managing a further server — a
+    chain). See "Multi-node" below for details.
   - Containers: list, select one/many, and run **start / stop / restart /
-    pause / resume / kill / remove** on the selection at once. Per-row logs
+    pause / resume / kill / remove** on the selection at once, scoped to
+    whichever environment is selected in the topbar switcher. Per-row logs
     and live stats too. The Dry Dock container itself is automatically
-    excluded from the destructive actions (both in the UI and enforced
-    server-side) so you can't accidentally take the app down.
+    excluded from the destructive actions on its own (local) host.
   - **Add container**: either pull-and-run a brand new image, or launch
     straight from an image you've already got locally — with ports, env
     vars, command, and restart policy either way.
@@ -34,17 +48,61 @@ lets you pick every UI color.
 docker compose up -d --build
 ```
 
-Then open **http://localhost:4000**.
+Then open **http://localhost:4000** and log in with `admin` / `admin` (you'll
+be prompted to set a new password immediately).
 
 That's it — the compose file mounts your host's Docker socket into the
 container so Dry Dock can see and manage your other containers, and a named
-volume so your saved theme survives restarts/updates.
+volume so your saved theme, users, and environments survive restarts/updates.
 
 > ⚠️ Mounting `/var/run/docker.sock` gives the container root-equivalent
-> control over your host. Only run this on a machine/network you trust, and
-> don't expose port 4000 to the public internet without putting something
-> like a reverse proxy + auth in front of it (there's no login screen yet —
-> see "What's not here yet" below).
+> control over your host. Even with login enabled, only expose port 4000 to
+> networks/people you trust — consider a reverse proxy with TLS in front of
+> it for anything beyond your LAN.
+
+## Access control
+
+Three building blocks, same shape as most team-based tools:
+
+- **Users** — an account with a username/password and zero or more roles
+  assigned directly.
+- **Teams** — a group of users; roles can be granted to a team so every
+  member inherits them (new users are auto-added to the default "Everyone"
+  team).
+- **Roles** — a named bundle of permissions (e.g. `containers.manage`,
+  `environments.manage`, `users.manage` — see `server/lib/rbac.js` for the
+  full catalogue). Three built-in roles ship out of the box:
+  **Administrator** (everything), **Member** (operate containers/images),
+  and **Viewer** (read-only).
+
+A user's *effective* permissions are the union of their direct roles and
+every role granted to a team they belong to. Manage all of this under
+**Access Control** in the sidebar (visible to anyone with `users.manage`).
+
+## Multi-node ("Environments")
+
+Dry Dock always has one built-in environment, **"This host"** — the local
+Docker socket, same as before. From **Dashboard → Add environment** you can
+add more:
+
+- **Standalone Docker node** — Dry Dock connects directly to another
+  machine's Docker Engine over TCP (`dockerd -H tcp://0.0.0.0:2375`, ideally
+  behind an SSH tunnel or with TLS client certs — the wizard has a TLS
+  toggle for CA/cert/key). No agent software needed on that box, just a
+  reachable Docker daemon.
+- **Self-hosted Dry Dock manager** — instead of reaching a Docker Engine
+  directly, Dry Dock proxies API calls through *another Dry Dock instance's*
+  HTTP API, authenticated with a shared **agent token** (find yours under
+  Dashboard → Add environment → that instance's Environments →
+  "Agent token"). This is for nodes you can't reach directly but that
+  another Dry Dock can — including chaining further: point the "remote
+  environment id" field at one of *that* instance's own standalone/agent
+  environments to reach a third server through it.
+
+Once added, use the **environment switcher** in the topbar (Containers /
+Monitoring / Images pages) to jump between nodes. Container/image
+permissions apply per-user across every environment; environment
+management itself (`environments.manage`) is a separate permission.
 
 ## Run it locally (development)
 
@@ -89,67 +147,60 @@ Add it to `server/data/theme.json`, `client/src/theme/presets.js`
 
 ```
 server/
-  server.js            Express app, serves the built client in production
-  lib/docker.js         dockerode connection (socket or DOCKER_HOST)
-  lib/self.js             detects Dry Dock's own container ID for self-protection
-  lib/stats.js             turns raw Docker stats into CPU%/mem/net/disk numbers
-  lib/store.js              reads/writes the saved theme + custom presets JSON
-  routes/containers.js       list/start/stop/restart/pause/unpause/kill/remove/logs/stats/create
-  routes/images.js            list/pull (streamed progress)/remove
-  routes/theme.js               GET/PUT the active/default theme
-  routes/presets.js               CRUD for user-saved custom presets
-  data/theme.json                   persisted active theme (mount this as a volume)
-  data/presets.json                   persisted custom presets (same volume)
+  server.js                 Express app, serves the built client in production
+  lib/
+    docker.js                 dockerode connection for the LOCAL socket
+    dockerPool.js              per-environment dockerode connections (local/standalone) + ping/test
+    containerHandlers.js        shared container/image route logic (used by both the user-facing and agent routers)
+    self.js                      detects Dry Dock's own container ID for self-protection
+    stats.js                       turns raw Docker stats into CPU%/mem/net/disk numbers
+    store.js                        generic JSON-file collections (users/teams/roles/environments/settings) + theme/presets
+    auth.js                          password hashing, JWT session signing, agent token management
+    rbac.js                           permission catalogue + default roles + effective-permission calculation
+    seed.js                            first-boot defaults: admin user, roles, default team, local environment
+  middleware/
+    auth.js                   session auth (attachUser/requireAuth) + requirePermission
+    environment.js              resolves ?env=<id>, proxies to agent-type environments, guards the agent API
+  routes/
+    auth.js                   login/logout/me/change-password
+    users.js / teams.js / roles.js   admin CRUD, gated by users.manage/teams.manage/roles.manage
+    environments.js             CRUD for nodes, connection testing, agent token
+    dashboard.js                  aggregated status card per environment
+    agent.js                       machine-to-machine surface (agent token auth) other Dry Dock instances call into
+    containers.js / images.js       environment-aware, permission-gated container/image routes
+    theme.js / presets.js            appearance, gated by appearance.manage for writes
+  data/                       persisted JSON (mount this whole directory as a volume)
 client/
-  src/App.jsx             page routing (containers / monitoring / images / settings)
-  src/pages/               Containers.jsx, Monitoring.jsx, Images.jsx, Settings.jsx
-  src/theme/               ThemeContext.jsx, presets.js (built-in, locked),
-                            random.js (theme randomizer)
-  src/components/          Sidebar, StatusDot, LogsModal, StatsModal, StatBar,
-                            Sparkline, ColorField, CreateContainerModal
-  src/lib/format.js        byte/percent formatting helpers
+  src/App.jsx                page routing + auth gate (login / forced password change / shell)
+  src/context/AuthContext.jsx   current user, permissions, login/logout
+  src/pages/
+    Login.jsx                  sign-in screen
+    Dashboard.jsx                environment cards + "add environment" entry point
+    Admin.jsx + admin/            Users.jsx, Teams.jsx, Roles.jsx tabs
+    Containers.jsx, Monitoring.jsx, Images.jsx, Settings.jsx   (unchanged, now environment-scoped)
+  src/components/
+    EnvironmentWizard.jsx       standalone-node / self-hosted-manager connection wizard
+    EnvironmentSwitcher.jsx       topbar node picker
+    ChangePasswordModal.jsx        forced password reset on first login
+    Sidebar, StatusDot, LogsModal, StatsModal, StatBar, Sparkline, ColorField, CreateContainerModal
+  src/theme/               ThemeContext.jsx, presets.js (built-in, locked), random.js (theme randomizer)
+  src/lib/                  format.js, permissions.js (client-side permission key constants)
+  src/api.js                fetch wrapper — env-scoping, auth, and admin endpoints
   src/styles/global.css    every color is a CSS variable
 ```
 
-## v1.1 — what's new
-
-- **Login screen + user accounts.** SQLite-backed users, bcrypt password
-  hashes, JWT sessions. A default `admin` / `admin` account is seeded on
-  first boot — **change the password immediately** from the Administration
-  page or `POST /api/auth/change-password`.
-- **Dashboard.** Aggregated view of every configured environment: nodes
-  online/offline, container and image totals, per-node health and engine
-  version, one click to switch the active environment.
-- **Environments + wizard.** Manage one or more Docker endpoints. v1
-  ships with local socket support; the wizard also has slots for TCP/TLS,
-  SSH, and remote Dry Dock federation which the backend factory already
-  understands but which need connection material wired in per install.
-  Every existing route is now environment-aware via the `x-env-id` header.
-- **Access control.** Roles (`admin`, `editor`, `viewer` seeded, plus any
-  custom role you create), a permissions catalog (`envs.*`, `containers.*`,
-  `images.*`, `appearance.write`, `admin`), and teams for grouping users.
-  Every API route is now guarded by the matching permission.
-
-### Configuration
-
-Environment variables:
-
-| Variable          | Default                       | Purpose                        |
-| ----------------- | ----------------------------- | ------------------------------ |
-| `PORT`            | `4000`                        | HTTP port                      |
-| `AUTH_SECRET`     | dev placeholder — **change**  | JWT signing key                |
-| `DB_PATH`         | `server/data/app.db`          | SQLite database path           |
-| `DOCKER_SOCKET_PATH` | `/var/run/docker.sock`     | Default local env socket path  |
-
-The compose volume `drydock-data` already covers both `app.db` and the
-theme/presets JSON.
-
 ## What's not here yet
 
-- TCP/TLS, SSH, and remote-node environment kinds are wired in the wizard
-  and factory but need real certificate/token plumbing per your setup.
-- Historical metrics.
-- Volumes / networks / Compose stack management.
-- Live-streaming logs (currently the last N lines on open).
-- Password reset flow (admins can reset from the Users tab).
+- Volumes and networks management (list/create/remove).
+- Docker Compose stack support (deploy/tear down a `docker-compose.yml`
+  from the UI, like Portainer's "stacks").
+- Live-streaming logs (currently pulls the last 200 lines on open; a
+  websocket/SSE tail would make it live).
+- Historical metrics (current monitoring is live-only; nothing is persisted,
+  so there's no "CPU over the last 24 hours" view yet).
+- Per-user theme profiles (the saved theme is still global, not per-account).
+- Audit log of who did what, where.
+- SSO / OAuth login (only local username+password accounts for now).
+
+Happy to build out any of these next — just say which one.
 

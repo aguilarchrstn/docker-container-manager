@@ -1,45 +1,51 @@
 import express from "express";
 import cors from "cors";
+import cookieParser from "cookie-parser";
 import path from "path";
 import { fileURLToPath } from "url";
-import "./lib/db.js"; // triggers schema + seed
-import { requireAuth } from "./lib/auth.js";
-import { pingEnv } from "./lib/dockerFactory.js";
-import { authRouter } from "./routes/auth.js";
-import { adminRouter } from "./routes/admin.js";
-import { environmentsRouter } from "./routes/environments.js";
-import { dashboardRouter } from "./routes/dashboard.js";
 import { containersRouter } from "./routes/containers.js";
 import { imagesRouter } from "./routes/images.js";
 import { themeRouter } from "./routes/theme.js";
 import { presetsRouter } from "./routes/presets.js";
+import { authRouter } from "./routes/auth.js";
+import { usersRouter } from "./routes/users.js";
+import { teamsRouter } from "./routes/teams.js";
+import { rolesRouter } from "./routes/roles.js";
+import { environmentsRouter } from "./routes/environments.js";
+import { dashboardRouter } from "./routes/dashboard.js";
+import { agentRouter } from "./routes/agent.js";
+import { assertDockerReachable } from "./lib/docker.js";
+import { attachUser } from "./middleware/auth.js";
+import { seedDefaults } from "./lib/seed.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-app.use(cors());
-app.use(express.json({ limit: "1mb" }));
+app.use(cors({ origin: true, credentials: true }));
+app.use(express.json());
+app.use(cookieParser());
+app.use(attachUser);
 
-// Public endpoints
 app.use("/api/auth", authRouter);
-app.get("/api/health", async (req, res) => {
-  const result = await pingEnv();
-  res.json({ ok: result.ok });
-});
-
-// Everything else requires authentication.
-app.use("/api", requireAuth);
-app.use("/api/dashboard", dashboardRouter);
+app.use("/api/users", usersRouter);
+app.use("/api/teams", teamsRouter);
+app.use("/api/roles", rolesRouter);
 app.use("/api/environments", environmentsRouter);
+app.use("/api/dashboard", dashboardRouter);
+app.use("/api/agent", agentRouter);
+
 app.use("/api/containers", containersRouter);
 app.use("/api/images", imagesRouter);
-// Theme / presets: reads allowed to any signed-in user, writes gated in the router.
 app.use("/api/theme", themeRouter);
 app.use("/api/presets", presetsRouter);
-app.use("/api/admin", adminRouter);
 
-// Serve the built React client in production.
+app.get("/api/health", async (req, res) => {
+  const ok = await assertDockerReachable();
+  res.json({ ok });
+});
+
+// Serve the built React client in production
 const clientDist = path.join(__dirname, "..", "client", "dist");
 app.use(express.static(clientDist));
 app.get("*", (req, res, next) => {
@@ -50,9 +56,10 @@ app.get("*", (req, res, next) => {
 });
 
 app.listen(PORT, async () => {
-  console.log(`dry-dock server listening on :${PORT}`);
-  const result = await pingEnv();
-  if (!result.ok) {
-    console.warn(`[dry-dock] Default environment not reachable: ${result.error}`);
-  }
+  console.log(`Dry Dock server listening on :${PORT}`);
+  await seedDefaults();
+  await assertDockerReachable();
+  console.log(
+    "First-boot defaults ready — log in with admin / admin (you'll be asked to change it)."
+  );
 });

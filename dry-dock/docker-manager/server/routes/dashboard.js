@@ -1,38 +1,36 @@
 import { Router } from "express";
-import { db } from "../lib/db.js";
-import { pingEnv } from "../lib/dockerFactory.js";
-import { requirePermission } from "../lib/auth.js";
+import { readCollection } from "../lib/store.js";
+import { requireAuth, requirePermission } from "../middleware/auth.js";
+import { pingEnvironment } from "../lib/dockerPool.js";
+import { PERMISSIONS } from "../lib/rbac.js";
 
 export const dashboardRouter = Router();
 
-// One aggregated call so the Dashboard can render everything from a single fetch.
-dashboardRouter.get("/", requirePermission("envs.read"), async (req, res) => {
-  const envs = db.prepare("SELECT * FROM environments ORDER BY is_default DESC, created_at ASC").all();
-  const nodes = await Promise.all(
-    envs.map(async (env) => {
-      const health = await pingEnv(env.id);
-      return {
-        id: env.id,
-        name: env.name,
-        kind: env.kind,
-        isDefault: !!env.is_default,
-        ...health,
-      };
-    })
-  );
-  const totals = nodes.reduce(
-    (acc, n) => {
-      if (n.ok) {
-        acc.nodesOnline += 1;
-        acc.containers += n.containers || 0;
-        acc.containersRunning += n.containersRunning || 0;
-        acc.images += n.images || 0;
-      } else {
-        acc.nodesOffline += 1;
-      }
-      return acc;
-    },
-    { nodesOnline: 0, nodesOffline: 0, containers: 0, containersRunning: 0, images: 0 }
-  );
-  res.json({ nodes, totals });
+dashboardRouter.use(requireAuth, requirePermission(PERMISSIONS.ENVIRONMENTS_VIEW));
+
+// Pings every configured environment in parallel and returns a status card
+// per node: online/offline, docker version, container/image counts. Kept
+// as one call so the Dashboard page loads with a single request instead of
+// one per node.
+dashboardRouter.get("/", async (req, res) => {
+  try {
+    const environments = await readCollection("environments", []);
+    const cards = await Promise.all(
+      environments.map(async (env) => {
+        const result = await pingEnvironment(env);
+        return {
+          id: env.id,
+          name: env.name,
+          type: env.type,
+          description: env.description,
+          online: result.ok,
+          error: result.ok ? null : result.error,
+          info: result.ok ? result.info : null,
+        };
+      })
+    );
+    res.json({ environments: cards });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });

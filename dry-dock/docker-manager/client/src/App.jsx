@@ -1,32 +1,31 @@
 import { useEffect, useState } from "react";
 import Sidebar from "./components/Sidebar.jsx";
+import EnvironmentSwitcher from "./components/EnvironmentSwitcher.jsx";
+import ChangePasswordModal from "./components/ChangePasswordModal.jsx";
 import Containers from "./pages/Containers.jsx";
 import Images from "./pages/Images.jsx";
 import Settings from "./pages/Settings.jsx";
 import Monitoring from "./pages/Monitoring.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
-import Environments from "./pages/Environments.jsx";
 import Admin from "./pages/Admin.jsx";
 import Login from "./pages/Login.jsx";
-import { listContainers, listImages } from "./api.js";
-import { useAuth } from "./auth/AuthContext.jsx";
-import { useEnv } from "./env/EnvContext.jsx";
+import { AuthProvider, useAuth } from "./context/AuthContext.jsx";
+import { listContainers, listImages, setCurrentEnvironment } from "./api.js";
 
 const TITLES = {
-  dashboard: { title: "Dashboard", subtitle: "Nodes, environments, and overall health" },
-  environments: { title: "Environments", subtitle: "Connect Docker hosts and remote nodes" },
+  dashboard: { title: "Dashboard", subtitle: "Every environment Dry Dock manages, at a glance" },
   containers: { title: "Containers", subtitle: "Start, stop, and inspect what's running" },
   monitoring: { title: "Monitoring", subtitle: "Live CPU, memory, network, and disk metrics" },
   images: { title: "Images", subtitle: "Pull new images or clear out old ones" },
   settings: { title: "Appearance", subtitle: "Make it yours" },
-  admin: { title: "Administration", subtitle: "Users, teams, roles, and permissions" },
+  admin: { title: "Access Control", subtitle: "Users, teams, roles, and permissions" },
 };
 
-export default function App() {
-  const { user, loading, signOut, hasPermission } = useAuth();
-  const { environments, currentId, setCurrentId } = useEnv();
+function Shell() {
+  const { user, checking } = useAuth();
   const [page, setPage] = useState("dashboard");
   const [counts, setCounts] = useState({});
+  const [envRefreshKey, setEnvRefreshKey] = useState(0);
 
   useEffect(() => {
     if (!user) return;
@@ -37,48 +36,69 @@ export default function App() {
     refreshCounts();
     const interval = setInterval(refreshCounts, 8000);
     return () => clearInterval(interval);
-  }, [user, currentId]);
+  }, [user, page]);
 
-  if (loading) return <div className="empty">Loading…</div>;
-  if (!user) return <Login />;
+  if (checking) {
+    return <div className="login-shell"><div className="login-hint">Loading…</div></div>;
+  }
 
-  const meta = TITLES[page] || TITLES.dashboard;
-  const isAdmin = hasPermission("admin");
+  if (!user) {
+    return <Login />;
+  }
+
+  if (user.mustChangePassword) {
+    return (
+      <ChangePasswordModal
+        currentIsDefault
+        onDone={() => {
+          /* AuthContext.refresh() inside the modal updates `user` */
+        }}
+      />
+    );
+  }
+
+  const meta = TITLES[page];
+
+  function handleSwitchEnvironment(id) {
+    setCurrentEnvironment(id);
+    setPage("containers");
+  }
 
   return (
     <div className="app-shell">
-      <Sidebar page={page} onNavigate={setPage} counts={counts} isAdmin={isAdmin} />
+      <Sidebar page={page} onNavigate={setPage} counts={counts} />
       <div className="main">
         <div className="topbar">
           <div>
             <h1>{meta.title}</h1>
             <div className="subtitle">{meta.subtitle}</div>
           </div>
-          <div className="topbar-right">
-            <label className="env-switch">
-              <span>Environment</span>
-              <select value={currentId || ""} onChange={(e) => setCurrentId(e.target.value)}>
-                {environments.map((e) => (
-                  <option key={e.id} value={e.id}>{e.name}</option>
-                ))}
-              </select>
-            </label>
-            <div className="user-menu">
-              <span className="user-name">{user.display_name || user.username}</span>
-              <button className="link" onClick={signOut}>Sign out</button>
-            </div>
-          </div>
+          {(page === "containers" || page === "monitoring" || page === "images") && (
+            <EnvironmentSwitcher key={envRefreshKey} />
+          )}
         </div>
         <div className="content">
-          {page === "dashboard" && <Dashboard />}
-          {page === "environments" && <Environments />}
+          {page === "dashboard" && (
+            <Dashboard
+              onSwitchEnvironment={handleSwitchEnvironment}
+              onEnvironmentsChanged={() => setEnvRefreshKey((k) => k + 1)}
+            />
+          )}
           {page === "containers" && <Containers />}
           {page === "monitoring" && <Monitoring />}
           {page === "images" && <Images />}
           {page === "settings" && <Settings />}
-          {page === "admin" && isAdmin && <Admin />}
+          {page === "admin" && <Admin />}
         </div>
       </div>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <Shell />
+    </AuthProvider>
   );
 }
