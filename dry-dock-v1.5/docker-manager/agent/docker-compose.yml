@@ -1,0 +1,16 @@
+services:
+  drydock-agent:
+    build: .
+    image: drydock-agent:latest
+    container_name: drydock-agent
+    restart: unless-stopped
+    ports:
+      - "${PORT:-4001}:${PORT:-4001}"
+    environment:
+      - AGENT_TOKEN=${AGENT_TOKEN:?set AGENT_TOKEN in .env — see .env.example}
+      - PORT=${PORT:-4001}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - LOG_JSON=${LOG_JSON:-false}
+      - DOCKER_SOCKET_PATH=${DOCKER_SOCKET_PATH:-/var/run/docker.sock}
+    volumes:
+      - ${DOCKER_SOCKET_PATH:-/var/run/docker.sock}:/var/run/docker.sock
