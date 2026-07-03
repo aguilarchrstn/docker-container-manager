@@ -17,6 +17,7 @@ import { agentRouter } from "./routes/agent.js";
 import { assertDockerReachable } from "./lib/docker.js";
 import { attachUser } from "./middleware/auth.js";
 import { seedDefaults } from "./lib/seed.js";
+import { requestLogger, logger } from "./lib/logger.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -25,6 +26,7 @@ const PORT = process.env.PORT || 4000;
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 app.use(cookieParser());
+app.use(requestLogger);
 app.use(attachUser);
 
 app.use("/api/auth", authRouter);
@@ -56,10 +58,8 @@ app.get("*", (req, res, next) => {
 });
 
 app.listen(PORT, async () => {
-  console.log(`Dry Dock server listening on :${PORT}`);
+  logger.info(`Dry Dock server listening on :${PORT}`);
   await seedDefaults();
   await assertDockerReachable();
-  console.log(
-    "First-boot defaults ready — log in with admin / admin (you'll be asked to change it)."
-  );
+  logger.info("First-boot defaults ready — log in with admin / admin (you'll be asked to change it).");
 });

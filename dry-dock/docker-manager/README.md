@@ -35,6 +35,20 @@ lets you pick every UI color.
     network, and disk I/O, polling every few seconds — plus a per-container
     stats modal with a CPU sparkline.
   - Images: list, pull (with live progress), remove.
+  - **Compose Generator**: a guided 7-step wizard (Basic, Docker Access,
+    Extra Storage, Runtime, Security, Storage backend, Authentication) that
+    builds a real `docker-compose.yml` live as you fill it in — every field
+    maps to something the server actually reads (`PORT`, `PUID`/`PGID`,
+    `DOCKER_SOCKET_PATH`/socket-proxy mode, `LOG_LEVEL`/`LOG_JSON`,
+    `JWT_SECRET`/`AGENT_TOKEN`). Steps for things Dry Dock doesn't support
+    yet (external Postgres, OIDC) are shown but clearly marked "coming
+    soon" rather than emitting settings that don't do anything.
+  - **Dry Dock Agent** (`agent/`): a separate, much smaller companion app
+    for remote nodes — deploy this instead of the full manager when you
+    just need Docker access exposed behind a shared secret. It's protocol-
+    compatible with the manager's own built-in agent surface, so the
+    wizard's "Self-hosted manager / Dry Dock Agent" environment type works
+    with either one. See `agent/README.md`.
   - **Appearance**: 5 built-in presets (locked — pick one as a starting
     point, but it won't overwrite the original) plus a **Randomize** button
     and your own **custom presets** you can save, reuse, and delete. Colors
@@ -183,24 +197,36 @@ client/
     EnvironmentSwitcher.jsx       topbar node picker
     ChangePasswordModal.jsx        forced password reset on first login
     Sidebar, StatusDot, LogsModal, StatsModal, StatBar, Sparkline, ColorField, CreateContainerModal
+  src/pages/ComposeGenerator.jsx  guided docker-compose.yml builder (live preview, copy/download)
+  src/lib/composeYaml.js       pure config -> docker-compose.yml generator used by the page above
   src/theme/               ThemeContext.jsx, presets.js (built-in, locked), random.js (theme randomizer)
   src/lib/                  format.js, permissions.js (client-side permission key constants)
   src/api.js                fetch wrapper — env-scoping, auth, and admin endpoints
   src/styles/global.css    every color is a CSS variable
+agent/                    standalone lightweight companion app for remote nodes (see agent/README.md)
+  server.js                 minimal Express app, mounts the same /api/agent/* contract as the manager
+  lib/                        docker.js, self.js, stats.js, logger.js, dockerPool.js, auth.js, containerHandlers.js
+                               (containerHandlers.js is byte-for-byte the same file as server/lib/containerHandlers.js)
+  Dockerfile, docker-compose.yml, README.md
 ```
 
 ## What's not here yet
 
 - Volumes and networks management (list/create/remove).
-- Docker Compose stack support (deploy/tear down a `docker-compose.yml`
-  from the UI, like Portainer's "stacks").
+- Docker Compose *stack* support (deploy/tear down an arbitrary
+  `docker-compose.yml` from the UI, like Portainer's "stacks" — the new
+  Compose Generator builds Dry Dock's *own* deployment file, which is a
+  different thing).
 - Live-streaming logs (currently pulls the last 200 lines on open; a
   websocket/SSE tail would make it live).
 - Historical metrics (current monitoring is live-only; nothing is persisted,
   so there's no "CPU over the last 24 hours" view yet).
 - Per-user theme profiles (the saved theme is still global, not per-account).
 - Audit log of who did what, where.
-- SSO / OAuth login (only local username+password accounts for now).
+- SSO / OAuth login (only local username+password accounts for now — the
+  Compose Generator's Authentication step is a placeholder for this).
+- External database backend (currently JSON files only — the Compose
+  Generator's Storage step is a placeholder for this too).
 
 Happy to build out any of these next — just say which one.
 

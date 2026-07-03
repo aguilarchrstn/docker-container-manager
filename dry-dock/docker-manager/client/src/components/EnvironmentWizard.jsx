@@ -10,9 +10,9 @@ const TYPES = [
   },
   {
     key: "agent",
-    title: "Self-hosted Dry Dock manager",
+    title: "Self-hosted manager / Dry Dock Agent",
     description:
-      "Connect through another Dry Dock instance's API — useful when that node isn't directly reachable, or when it's itself managing a further server.",
+      "Connect through another Dry Dock instance's API, or through the lightweight Dry Dock Agent container — useful when that node isn't directly reachable, or when it's itself managing a further server.",
   },
 ];
 
@@ -198,10 +198,10 @@ export default function EnvironmentWizard({ onClose, onCreated }) {
             ) : (
               <>
                 <label className="form-label">
-                  Manager base URL *
+                  Manager / agent base URL *
                   <input
                     className="form-input mono"
-                    placeholder="https://other-drydock.example.com"
+                    placeholder="https://other-drydock.example.com or http://node:4001"
                     value={agentConfig.baseUrl}
                     onChange={(e) => updateAgent("baseUrl", e.target.value)}
                   />
@@ -210,7 +210,7 @@ export default function EnvironmentWizard({ onClose, onCreated }) {
                   Agent token *
                   <input
                     className="form-input mono"
-                    placeholder="from that instance's Environments → Agent token"
+                    placeholder="from that instance's Environments → Agent token, or the agent's AGENT_TOKEN"
                     value={agentConfig.agentToken}
                     onChange={(e) => updateAgent("agentToken", e.target.value)}
                   />
@@ -239,7 +239,7 @@ export default function EnvironmentWizard({ onClose, onCreated }) {
               </div>
             )}
 
-            <div className="form-row" style={{ gap: 8 }}>
+            <div className="flex-row">
               <button type="button" className="btn btn-ghost" onClick={() => setStep(1)}>
                 Back
               </button>

@@ -8,8 +8,8 @@ import Settings from "./pages/Settings.jsx";
 import Monitoring from "./pages/Monitoring.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
 import Admin from "./pages/Admin.jsx";
-import Login from "./pages/Login.jsx";
 import ComposeGenerator from "./pages/ComposeGenerator.jsx";
+import Login from "./pages/Login.jsx";
 import { AuthProvider, useAuth } from "./context/AuthContext.jsx";
 import { listContainers, listImages, setCurrentEnvironment } from "./api.js";
 
@@ -18,7 +18,7 @@ const TITLES = {
   containers: { title: "Containers", subtitle: "Start, stop, and inspect what's running" },
   monitoring: { title: "Monitoring", subtitle: "Live CPU, memory, network, and disk metrics" },
   images: { title: "Images", subtitle: "Pull new images or clear out old ones" },
-  compose: { title: "Compose Generator", subtitle: "Build a docker-compose.yml with guided steps" },
+  compose: { title: "Docker Compose Generator", subtitle: "Follow the guided steps to configure Dry Dock's deployment" },
   settings: { title: "Appearance", subtitle: "Make it yours" },
   admin: { title: "Access Control", subtitle: "Users, teams, roles, and permissions" },
 };

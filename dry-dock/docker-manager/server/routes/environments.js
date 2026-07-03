@@ -44,8 +44,12 @@ environmentsRouter.post(
   "/agent-token/regenerate",
   requirePermission(PERMISSIONS.ENVIRONMENTS_MANAGE),
   async (req, res) => {
-    const token = await regenerateAgentToken();
-    res.json({ agentToken: token });
+    try {
+      const token = await regenerateAgentToken();
+      res.json({ agentToken: token });
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
   }
 );
 

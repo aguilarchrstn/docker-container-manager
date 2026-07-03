@@ -1,219 +1,35 @@
 import { useMemo, useState } from "react";
+import { defaultComposeConfig, generateCompose } from "../lib/composeYaml.js";
 
-// Arcane-style Docker Compose generator. 7 guided steps.
-const STEPS = [
-  { key: "basic", label: "Basic", title: "Basic setup", subtitle: "Essential Arcane settings" },
-  { key: "docker", label: "Docker Access", title: "Docker Access setup", subtitle: "Choose how Arcane talks to Docker." },
-  { key: "storage", label: "Project Storage", title: "Project Storage setup", subtitle: "Optional host mount for your projects (compose) folder. It's recommended to have this match on both sides so relative paths work correctly." },
-  { key: "runtime", label: "Runtime", title: "Runtime setup", subtitle: "Logging and runtime behavior" },
-  { key: "security", label: "Security", title: "Security setup", subtitle: "Encryption and authentication secrets" },
-  { key: "database", label: "Database", title: "Database setup", subtitle: "By default, Arcane uses SQLite. Enable this for external PostgreSQL." },
-  { key: "auth", label: "Authentication", title: "Authentication setup", subtitle: "Single Sign-On configuration" },
-];
-
-const DEFAULTS = {
-  appUrl: "http://localhost:3552",
-  port: "3552",
-  dataVolume: "arcane-data",
-  puid: "1000",
-  pgid: "1000",
-  dockerSocket: "/var/run/docker.sock",
-  useSocketProxy: false,
-  selinux: false,
-  projectsPath: "/opt/docker/projects",
-  logLevel: "error",
-  jsonLogging: false,
-  encryptionKey: "",
-  jwtSecret: "",
-  usePostgres: false,
-  pgHost: "postgres",
-  pgPort: "5432",
-  pgUser: "arcane",
-  pgPassword: "",
-  pgDatabase: "arcane",
-  enableOidc: false,
-  oidcIssuer: "",
-  oidcClientId: "",
-  oidcClientSecret: "",
-  oidcRedirect: "",
-};
-
-function randHex(bytes) {
+function randomHex(bytes = 32) {
   const arr = new Uint8Array(bytes);
-  (globalThis.crypto || window.crypto).getRandomValues(arr);
+  crypto.getRandomValues(arr);
   return Array.from(arr, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-function buildCompose(v) {
-  const env = [];
-  const push = (k, val) => { if (val !== "" && val !== undefined && val !== null) env.push(`      ${k}: ${JSON.stringify(String(val))}`); };
-  push("APP_URL", v.appUrl);
-  push("PORT", v.port);
-  push("PUID", v.puid);
-  push("PGID", v.pgid);
-  push("LOG_LEVEL", v.logLevel);
-  if (v.jsonLogging) push("LOG_JSON", "true");
-  if (v.encryptionKey) push("ENCRYPTION_KEY", v.encryptionKey);
-  if (v.jwtSecret) push("JWT_SECRET", v.jwtSecret);
-  if (v.usePostgres) {
-    push("DB_DRIVER", "postgres");
-    push("POSTGRES_HOST", v.pgHost);
-    push("POSTGRES_PORT", v.pgPort);
-    push("POSTGRES_USER", v.pgUser);
-    push("POSTGRES_PASSWORD", v.pgPassword);
-    push("POSTGRES_DB", v.pgDatabase);
-  }
-  if (v.enableOidc) {
-    push("OIDC_ENABLED", "true");
-    push("OIDC_ISSUER", v.oidcIssuer);
-    push("OIDC_CLIENT_ID", v.oidcClientId);
-    push("OIDC_CLIENT_SECRET", v.oidcClientSecret);
-    push("OIDC_REDIRECT_URI", v.oidcRedirect);
-  }
-
-  const volumes = [];
-  if (v.useSocketProxy) {
-    // socket proxy service handles docker access; app talks to it via tcp
-    push("DOCKER_HOST", "tcp://socket-proxy:2375");
-  } else {
-    const suffix = v.selinux ? ":z" : "";
-    volumes.push(`      - ${v.dockerSocket}:/var/run/docker.sock${suffix}`);
-  }
-  const dataSuffix = v.selinux ? ":z" : "";
-  volumes.push(`      - ${v.dataVolume}:/app/data${dataSuffix}`);
-  if (v.projectsPath) {
-    volumes.push(`      - ${v.projectsPath}:${v.projectsPath}${dataSuffix}`);
-    push("PROJECTS_DIR", v.projectsPath);
-  }
-
-  const services = [];
-  services.push(`  arcane:
-    image: ghcr.io/ofkm/arcane:latest
-    container_name: arcane
-    restart: unless-stopped
-    ports:
-      - "${v.port}:${v.port}"
-    environment:
-${env.join("\n") || "      {}"}
-    volumes:
-${volumes.join("\n")}`);
-
-  if (v.useSocketProxy) {
-    services.push(`  socket-proxy:
-    image: ghcr.io/tecnativa/docker-socket-proxy:latest
-    container_name: socket-proxy
-    restart: unless-stopped
-    environment:
-      CONTAINERS: "1"
-      IMAGES: "1"
-      NETWORKS: "1"
-      VOLUMES: "1"
-      SERVICES: "1"
-      TASKS: "1"
-      POST: "1"
-    volumes:
-      - ${v.dockerSocket}:/var/run/docker.sock:ro`);
-  }
-
-  if (v.usePostgres) {
-    services.push(`  postgres:
-    image: postgres:16-alpine
-    container_name: arcane-postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${JSON.stringify(v.pgUser)}
-      POSTGRES_PASSWORD: ${JSON.stringify(v.pgPassword)}
-      POSTGRES_DB: ${JSON.stringify(v.pgDatabase)}
-    volumes:
-      - arcane-postgres:/var/lib/postgresql/data`);
-  }
-
-  const vols = [`  ${v.dataVolume}:`];
-  if (v.usePostgres) vols.push("  arcane-postgres:");
-
-  return `services:
-${services.join("\n\n")}
-
-volumes:
-${vols.join("\n")}
-`;
-}
-
-function Field({ label, hint, children }) {
-  return (
-    <div className="cg-field">
-      <div className="cg-field-label">
-        <div className="cg-field-title">{label}</div>
-        {hint && <div className="cg-field-hint">{hint}</div>}
-      </div>
-      <div className="cg-field-control">{children}</div>
-    </div>
-  );
-}
-
-function Toggle({ checked, onChange, label, hint }) {
-  return (
-    <label className="cg-toggle">
-      <div>
-        <div className="cg-field-title">{label}</div>
-        {hint && <div className="cg-field-hint">{hint}</div>}
-      </div>
-      <input type="checkbox" checked={!!checked} onChange={(e) => onChange(e.target.checked)} />
-    </label>
-  );
-}
+const STEPS = ["Basic", "Docker Access", "Extra Storage", "Runtime", "Security", "Storage", "Authentication"];
 
 export default function ComposeGenerator() {
-  const [values, setValues] = useState(DEFAULTS);
-  const [stepIdx, setStepIdx] = useState(0);
-  const [output, setOutput] = useState(null);
+  const [step, setStep] = useState(0);
+  const [cfg, setCfg] = useState(defaultComposeConfig());
+  const [generated, setGenerated] = useState(false);
+  const [copied, setCopied] = useState(false);
 
-  const set = (patch) => setValues((v) => ({ ...v, ...patch }));
-  const step = STEPS[stepIdx];
+  const yaml = useMemo(() => generateCompose(cfg), [cfg]);
 
-  const summary = useMemo(() => {
-    switch (step.key) {
-      case "basic":
-        return [
-          ["App URL", values.appUrl],
-          ["Port", values.port],
-          ["Data Volume", values.dataVolume],
-          ["PUID (User ID)", values.puid],
-          ["PGID (Group ID)", values.pgid],
-        ];
-      case "docker":
-        return [["Docker Socket", values.useSocketProxy ? "via socket-proxy" : values.dockerSocket]];
-      case "storage":
-        return values.projectsPath ? [["Projects Path", values.projectsPath]] : [];
-      case "runtime":
-        return [["Log Level", values.logLevel], ["JSON Logs", values.jsonLogging ? "on" : "off"]];
-      case "security":
-        return [
-          ["Encryption Key", values.encryptionKey ? "custom" : "auto"],
-          ["JWT Secret", values.jwtSecret ? "custom" : "auto"],
-        ];
-      case "database":
-        return [["Driver", values.usePostgres ? "PostgreSQL" : "SQLite"]];
-      case "auth":
-        return [["OIDC", values.enableOidc ? "enabled" : "disabled"]];
-      default:
-        return [];
-    }
-  }, [step, values]);
-
-  const total = summary.length;
-  const filled = summary.filter(([, val]) => val !== "" && val !== undefined && val !== null).length;
-
-  function next() {
-    if (stepIdx < STEPS.length - 1) setStepIdx(stepIdx + 1);
-    else setOutput(buildCompose(values));
-  }
-  function back() {
-    if (stepIdx > 0) setStepIdx(stepIdx - 1);
+  function set(field, value) {
+    setCfg((c) => ({ ...c, [field]: value }));
   }
 
-  function download() {
-    const blob = new Blob([output], { type: "text/yaml" });
+  function handleCopy() {
+    navigator.clipboard.writeText(yaml).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }
+
+  function handleDownload() {
+    const blob = new Blob([yaml], { type: "text/yaml" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -222,214 +38,290 @@ export default function ComposeGenerator() {
     URL.revokeObjectURL(url);
   }
 
-  return (
-    <div className="cg-wrap">
-      <div className="cg-main">
-        <div className="cg-header">
-          <h1>Docker Compose Generator</h1>
-          <div className="subtitle">
-            Follow the guided steps to configure Arcane services, credentials, and storage. Your Compose file is updated in real time.
-          </div>
-          <div className="cg-header-actions">
-            <button className="btn btn-ghost btn-sm">📖 Setup Guide</button>
-            <button className="btn btn-ghost btn-sm">⚙ Environment Docs</button>
-          </div>
-        </div>
-
-        <div className="cg-stepper">
-          {STEPS.map((s, i) => (
-            <button
-              key={s.key}
-              className={`cg-step ${i === stepIdx ? "active" : ""} ${i < stepIdx ? "done" : ""}`}
-              onClick={() => setStepIdx(i)}
-            >
-              <span className="cg-step-num">{i + 1}</span>
-              <span className="cg-step-label">{s.label}</span>
+  if (generated) {
+    return (
+      <div>
+        <div className="section-heading">
+          <h2>Your docker-compose.yml</h2>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn btn-ghost btn-sm" onClick={() => setGenerated(false)}>
+              ← Back to wizard
             </button>
-          ))}
-        </div>
-
-        <div className="cg-progress-label">Step {stepIdx + 1} of {STEPS.length}</div>
-        <div className="cg-progress"><div style={{ width: `${((stepIdx + 1) / STEPS.length) * 100}%` }} /></div>
-
-        <h2 className="cg-section-title">{step.title}</h2>
-        <div className="subtitle" style={{ marginBottom: 18 }}>{step.subtitle}</div>
-
-        <div className="cg-panel">
-          <div className="cg-panel-title">
-            {step.key === "basic" && "Core Configuration"}
-            {step.key === "docker" && "Docker Access"}
-            {step.key === "storage" && "Project Storage"}
-            {step.key === "runtime" && "Runtime"}
-            {step.key === "security" && "Security"}
-            {step.key === "database" && "Database Configuration"}
-            {step.key === "auth" && "OIDC Authentication"}
+            <button className="btn btn-ghost btn-sm" onClick={handleCopy}>
+              {copied ? "Copied!" : "Copy"}
+            </button>
+            <button className="btn btn-primary btn-sm" onClick={handleDownload}>
+              Download
+            </button>
           </div>
-          <div className="cg-panel-sub">{step.subtitle}</div>
-
-          {step.key === "basic" && (
-            <>
-              <Field label="App URL" hint="The URL arcane runs on">
-                <input value={values.appUrl} onChange={(e) => set({ appUrl: e.target.value })} />
-              </Field>
-              <Field label="Port" hint="The port arcane should run on">
-                <input value={values.port} onChange={(e) => set({ port: e.target.value })} />
-              </Field>
-              <Field label="Data Volume" hint="Docker volume name for persistent data">
-                <input value={values.dataVolume} onChange={(e) => set({ dataVolume: e.target.value })} />
-              </Field>
-              <Field label="PUID (User ID)" hint="File owner user ID">
-                <input value={values.puid} onChange={(e) => set({ puid: e.target.value })} />
-              </Field>
-              <Field label="PGID (Group ID)" hint="File owner group ID">
-                <input value={values.pgid} onChange={(e) => set({ pgid: e.target.value })} />
-              </Field>
-            </>
-          )}
-
-          {step.key === "docker" && (
-            <>
-              <Field label="Docker Socket" hint="Docker daemon socket path (used only when not using a socket proxy)">
-                <input value={values.dockerSocket} onChange={(e) => set({ dockerSocket: e.target.value })} />
-              </Field>
-              <Toggle
-                label="Use Socket Proxy"
-                hint="Use a Docker socket proxy container instead of mounting the Docker socket directly"
-                checked={values.useSocketProxy}
-                onChange={(v) => set({ useSocketProxy: v })}
-              />
-              <Toggle
-                label="Enable SELinux compatibility"
-                hint="Add SELinux-related compose settings for mounted paths and direct socket mode"
-                checked={values.selinux}
-                onChange={(v) => set({ selinux: v })}
-              />
-            </>
-          )}
-
-          {step.key === "storage" && (
-            <Field label="Projects Host Path" hint="Optional absolute host path to mount as Arcane projects directory (for project storage)">
-              <input value={values.projectsPath} onChange={(e) => set({ projectsPath: e.target.value })} />
-            </Field>
-          )}
-
-          {step.key === "runtime" && (
-            <>
-              <Field label="Log Level" hint="Logging verbosity">
-                <select value={values.logLevel} onChange={(e) => set({ logLevel: e.target.value })}>
-                  <option value="debug">debug</option>
-                  <option value="info">info</option>
-                  <option value="warn">warn</option>
-                  <option value="error">error</option>
-                </select>
-              </Field>
-              <Toggle
-                label="JSON Logging"
-                hint="Enable JSON formatted logs"
-                checked={values.jsonLogging}
-                onChange={(v) => set({ jsonLogging: v })}
-              />
-            </>
-          )}
-
-          {step.key === "security" && (
-            <>
-              <Field label="Encryption Key" hint="Encryption key for secure stored sensitive data (auto-generated if empty)">
-                <div className="cg-input-row">
-                  <input placeholder="Auto-generated if empty" value={values.encryptionKey} onChange={(e) => set({ encryptionKey: e.target.value })} />
-                  <button className="btn btn-primary btn-sm" onClick={() => set({ encryptionKey: randHex(32) })}>Generate</button>
-                </div>
-              </Field>
-              <Field label="JWT Secret" hint="Session secret (auto-generated if empty)">
-                <div className="cg-input-row">
-                  <input placeholder="Auto-generated if empty" value={values.jwtSecret} onChange={(e) => set({ jwtSecret: e.target.value })} />
-                  <button className="btn btn-primary btn-sm" onClick={() => set({ jwtSecret: randHex(48) })}>Generate</button>
-                </div>
-              </Field>
-            </>
-          )}
-
-          {step.key === "database" && (
-            <>
-              <Toggle
-                label="Use external PostgreSQL database"
-                checked={values.usePostgres}
-                onChange={(v) => set({ usePostgres: v })}
-              />
-              {values.usePostgres && (
-                <>
-                  <Field label="Host"><input value={values.pgHost} onChange={(e) => set({ pgHost: e.target.value })} /></Field>
-                  <Field label="Port"><input value={values.pgPort} onChange={(e) => set({ pgPort: e.target.value })} /></Field>
-                  <Field label="User"><input value={values.pgUser} onChange={(e) => set({ pgUser: e.target.value })} /></Field>
-                  <Field label="Password"><input type="password" value={values.pgPassword} onChange={(e) => set({ pgPassword: e.target.value })} /></Field>
-                  <Field label="Database"><input value={values.pgDatabase} onChange={(e) => set({ pgDatabase: e.target.value })} /></Field>
-                </>
-              )}
-            </>
-          )}
-
-          {step.key === "auth" && (
-            <>
-              <Toggle
-                label="Enable OIDC Authentication"
-                checked={values.enableOidc}
-                onChange={(v) => set({ enableOidc: v })}
-              />
-              {values.enableOidc && (
-                <>
-                  <Field label="Issuer URL"><input value={values.oidcIssuer} onChange={(e) => set({ oidcIssuer: e.target.value })} /></Field>
-                  <Field label="Client ID"><input value={values.oidcClientId} onChange={(e) => set({ oidcClientId: e.target.value })} /></Field>
-                  <Field label="Client Secret"><input type="password" value={values.oidcClientSecret} onChange={(e) => set({ oidcClientSecret: e.target.value })} /></Field>
-                  <Field label="Redirect URI"><input value={values.oidcRedirect} onChange={(e) => set({ oidcRedirect: e.target.value })} /></Field>
-                </>
-              )}
-            </>
-          )}
         </div>
+        <pre className="compose-preview">{yaml}</pre>
+        <div className="field-hint" style={{ marginTop: 12 }}>
+          Save this as <code>docker-compose.yml</code> next to Dry Dock's Dockerfile and run{" "}
+          <code>docker compose up -d --build</code>.
+          {cfg.dockerAccessMode === "socket" &&
+            " You've chosen to mount the Docker socket directly — that grants root-equivalent host access, so only run this on networks/people you trust."}
+        </div>
+      </div>
+    );
+  }
 
-        {output && (
-          <div className="cg-output">
-            <div className="cg-output-header">
-              <div className="cg-panel-title">docker-compose.yml</div>
-              <div style={{ display: "flex", gap: 8 }}>
-                <button className="btn btn-ghost btn-sm" onClick={() => navigator.clipboard.writeText(output)}>Copy</button>
-                <button className="btn btn-primary btn-sm" onClick={download}>Download</button>
-              </div>
-            </div>
-            <pre>{output}</pre>
-          </div>
-        )}
+  return (
+    <div>
+      <div className="compose-toolbar">
+        <div className="field-hint">
+          Follow the guided steps to configure Dry Dock's deployment, credentials, and storage. Your
+          Compose file updates in real time.
+        </div>
       </div>
 
-      <aside className="cg-side">
-        <div className="cg-side-card">
-          <div className="cg-side-title">CURRENT STEP SUMMARY</div>
-          <div className="cg-side-sub">Review key choices before continuing.</div>
-          {summary.length === 0 ? (
-            <div className="cg-side-empty">Make a selection in this step to see it summarized here.</div>
-          ) : (
-            <div className="cg-side-list">
-              {summary.map(([k, v]) => (
-                <div className="cg-side-row" key={k}>
-                  <span>{k}</span>
-                  <strong>{v || "—"}</strong>
-                </div>
-              ))}
-            </div>
-          )}
-          <div className="cg-side-row" style={{ borderTop: "1px solid var(--color-border)", paddingTop: 10 }}>
-            <span>Completion</span>
-            <strong>{filled}/{total || 0}</strong>
+      <div className="wizard-stepper">
+        {STEPS.map((label, i) => (
+          <button
+            key={label}
+            type="button"
+            className={`wizard-step ${i === step ? "active" : ""} ${i < step ? "done" : ""}`}
+            onClick={() => setStep(i)}
+          >
+            <span className="wizard-step-dot">{i + 1}</span>
+            {label}
+          </button>
+        ))}
+      </div>
+      <div className="wizard-progress">
+        <div className="wizard-progress-fill" style={{ width: `${((step + 1) / STEPS.length) * 100}%` }} />
+      </div>
+      <div className="field-hint" style={{ margin: "8px 0 20px" }}>Step {step + 1} of {STEPS.length}</div>
+
+      <div className="wizard-layout">
+        <div className="form-section-card">
+          {step === 0 && <BasicStep cfg={cfg} set={set} />}
+          {step === 1 && <DockerAccessStep cfg={cfg} set={set} />}
+          {step === 2 && <ExtraStorageStep cfg={cfg} set={set} />}
+          {step === 3 && <RuntimeStep cfg={cfg} set={set} />}
+          {step === 4 && <SecurityStep cfg={cfg} set={set} />}
+          {step === 5 && <StorageBackendStep />}
+          {step === 6 && <AuthenticationStep />}
+
+          <div className="flex-row" style={{ marginTop: 20 }}>
+            <button className="btn btn-ghost" disabled={step === 0} onClick={() => setStep((s) => s - 1)}>
+              ← Back
+            </button>
+            <span className="spacer" />
+            {step < STEPS.length - 1 ? (
+              <button className="btn btn-primary" onClick={() => setStep((s) => s + 1)}>
+                {STEPS[step + 1]} →
+              </button>
+            ) : (
+              <button className="btn btn-primary" onClick={() => setGenerated(true)}>
+                Generate Docker Compose
+              </button>
+            )}
           </div>
         </div>
 
-        <div className="cg-side-actions">
-          <button className="btn btn-ghost" onClick={back} disabled={stepIdx === 0}>‹ Back</button>
-          <button className="btn btn-primary" onClick={next}>
-            {stepIdx === STEPS.length - 1 ? "📄 Generate Docker Compose" : `${STEPS[stepIdx + 1].label} ›`}
+        <StepSummary cfg={cfg} step={step} />
+      </div>
+    </div>
+  );
+}
+
+function StepSummary({ cfg, step }) {
+  const rows = [];
+  if (step >= 0) {
+    rows.push(["Port", cfg.port], ["Data volume", cfg.dataVolume], ["PUID / PGID", `${cfg.puid} / ${cfg.pgid}`]);
+  }
+  if (step >= 1) {
+    rows.push(["Docker access", cfg.dockerAccessMode === "proxy" ? "Socket proxy" : "Direct socket"]);
+  }
+  if (step >= 2 && cfg.extraHostPath) {
+    rows.push(["Extra mount", `${cfg.extraHostPath} → ${cfg.extraContainerPath}`]);
+  }
+  if (step >= 3) {
+    rows.push(["Log level", cfg.logLevel]);
+  }
+  if (step >= 4) {
+    rows.push(["JWT secret", cfg.jwtSecret ? "set" : "auto-generated"]);
+    rows.push(["Agent token", cfg.agentToken ? "set" : "auto-generated"]);
+  }
+
+  return (
+    <div className="wizard-summary">
+      <div className="wizard-summary-title">CURRENT STEP SUMMARY</div>
+      <div className="field-hint" style={{ marginBottom: 12 }}>Review key choices before continuing.</div>
+      {rows.map(([label, value]) => (
+        <div className="wizard-summary-row" key={label}>
+          <span>{label}</span>
+          <strong>{value}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function BasicStep({ cfg, set }) {
+  return (
+    <>
+      <h3>Basic setup</h3>
+      <div className="field-hint" style={{ marginBottom: 16 }}>Core deployment settings.</div>
+      <label className="form-label">
+        Port
+        <span className="field-hint">The port Dry Dock listens on and is published as.</span>
+        <input className="form-input" value={cfg.port} onChange={(e) => set("port", e.target.value)} />
+      </label>
+      <label className="form-label">
+        Data volume
+        <span className="field-hint">Docker volume name for persistent data (users, roles, theme, environments).</span>
+        <input className="form-input" value={cfg.dataVolume} onChange={(e) => set("dataVolume", e.target.value)} />
+      </label>
+      <label className="form-label">
+        PUID (User ID)
+        <span className="field-hint">Run the app as this user instead of root — file ownership on the data volume.</span>
+        <input className="form-input" value={cfg.puid} onChange={(e) => set("puid", e.target.value)} />
+      </label>
+      <label className="form-label">
+        PGID (Group ID)
+        <span className="field-hint">File owner group ID.</span>
+        <input className="form-input" value={cfg.pgid} onChange={(e) => set("pgid", e.target.value)} />
+      </label>
+    </>
+  );
+}
+
+function DockerAccessStep({ cfg, set }) {
+  return (
+    <>
+      <h3>Docker Access setup</h3>
+      <div className="field-hint" style={{ marginBottom: 16 }}>Choose how Dry Dock talks to Docker.</div>
+      <label className="form-label">
+        Access mode
+        <select className="form-input" value={cfg.dockerAccessMode} onChange={(e) => set("dockerAccessMode", e.target.value)}>
+          <option value="socket">Mount the Docker socket directly</option>
+          <option value="proxy">Use a Docker socket proxy container</option>
+        </select>
+      </label>
+      <label className="form-label">
+        Docker socket path
+        <span className="field-hint">Path on the host, mounted into the container (or into the proxy, if enabled).</span>
+        <input className="form-input mono" value={cfg.dockerSocketPath} onChange={(e) => set("dockerSocketPath", e.target.value)} />
+      </label>
+      <label className="form-checkbox">
+        <input type="checkbox" checked={cfg.selinux} onChange={(e) => set("selinux", e.target.checked)} />
+        Enable SELinux compatibility (adds <code>:Z</code> to mounted paths)
+      </label>
+      {cfg.dockerAccessMode === "proxy" && (
+        <div className="field-hint" style={{ marginTop: 8 }}>
+          Adds a <code>tecnativa/docker-socket-proxy</code> sidecar — Dry Dock talks to Docker over that
+          instead of touching the socket directly, which limits blast radius if the app is ever compromised.
+        </div>
+      )}
+    </>
+  );
+}
+
+function ExtraStorageStep({ cfg, set }) {
+  return (
+    <>
+      <h3>Extra Storage setup</h3>
+      <div className="field-hint" style={{ marginBottom: 16 }}>
+        Optional additional host mount — for troubleshooting, backups, or anything else you want reachable
+        from inside the container.
+      </div>
+      <label className="form-label">
+        Host path
+        <input className="form-input mono" placeholder="optional, e.g. /opt/drydock/extra" value={cfg.extraHostPath} onChange={(e) => set("extraHostPath", e.target.value)} />
+      </label>
+      <label className="form-label">
+        Container path
+        <input className="form-input mono" placeholder="e.g. /app/extra" value={cfg.extraContainerPath} onChange={(e) => set("extraContainerPath", e.target.value)} />
+      </label>
+    </>
+  );
+}
+
+function RuntimeStep({ cfg, set }) {
+  return (
+    <>
+      <h3>Runtime setup</h3>
+      <div className="field-hint" style={{ marginBottom: 16 }}>Logging behavior.</div>
+      <label className="form-label">
+        Log level
+        <select className="form-input" value={cfg.logLevel} onChange={(e) => set("logLevel", e.target.value)}>
+          <option value="silent">silent</option>
+          <option value="error">error</option>
+          <option value="warn">warn</option>
+          <option value="info">info</option>
+          <option value="debug">debug</option>
+        </select>
+      </label>
+      <label className="form-checkbox">
+        <input type="checkbox" checked={cfg.logJson} onChange={(e) => set("logJson", e.target.checked)} />
+        JSON logging (structured, one line per log entry)
+      </label>
+    </>
+  );
+}
+
+function SecurityStep({ cfg, set }) {
+  return (
+    <>
+      <h3>Security setup</h3>
+      <div className="field-hint" style={{ marginBottom: 16 }}>
+        Both are auto-generated and persisted on first boot if left blank — only pin these if you need a
+        predictable value (multi-replica deployments, provisioning several agents from one file).
+      </div>
+      <label className="form-label">
+        JWT secret
+        <span className="field-hint">Signs login sessions.</span>
+        <div className="flex-row">
+          <input className="form-input mono" placeholder="auto-generated if empty" value={cfg.jwtSecret} onChange={(e) => set("jwtSecret", e.target.value)} />
+          <button type="button" className="btn btn-primary btn-sm" onClick={() => set("jwtSecret", randomHex(48))}>
+            Generate
           </button>
         </div>
-      </aside>
-    </div>
+      </label>
+      <label className="form-label">
+        Agent token
+        <span className="field-hint">Shared secret for remote nodes/agents that connect in.</span>
+        <div className="flex-row">
+          <input className="form-input mono" placeholder="auto-generated if empty" value={cfg.agentToken} onChange={(e) => set("agentToken", e.target.value)} />
+          <button type="button" className="btn btn-primary btn-sm" onClick={() => set("agentToken", randomHex(24))}>
+            Generate
+          </button>
+        </div>
+      </label>
+    </>
+  );
+}
+
+function StorageBackendStep() {
+  return (
+    <>
+      <h3>Storage backend</h3>
+      <div className="field-hint" style={{ marginBottom: 16 }}>
+        Dry Dock currently stores users, roles, environments, and theme as JSON files on the data volume you
+        set in step 1 — no separate database service to run or configure.
+      </div>
+      <label className="form-checkbox disabled">
+        <input type="checkbox" disabled />
+        External PostgreSQL — coming soon
+      </label>
+    </>
+  );
+}
+
+function AuthenticationStep() {
+  return (
+    <>
+      <h3>Authentication setup</h3>
+      <div className="field-hint" style={{ marginBottom: 16 }}>
+        Local username/password accounts with full role-based access control are built in (see Access
+        Control in the sidebar) — nothing to configure here.
+      </div>
+      <label className="form-checkbox disabled">
+        <input type="checkbox" disabled />
+        OIDC / Single Sign-On — coming soon
+      </label>
+    </>
   );
 }
