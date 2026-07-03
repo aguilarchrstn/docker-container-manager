@@ -9,6 +9,7 @@ import Monitoring from "./pages/Monitoring.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
 import Admin from "./pages/Admin.jsx";
 import Login from "./pages/Login.jsx";
+import ComposeGenerator from "./pages/ComposeGenerator.jsx";
 import { AuthProvider, useAuth } from "./context/AuthContext.jsx";
 import { listContainers, listImages, setCurrentEnvironment } from "./api.js";
 
@@ -17,6 +18,7 @@ const TITLES = {
   containers: { title: "Containers", subtitle: "Start, stop, and inspect what's running" },
   monitoring: { title: "Monitoring", subtitle: "Live CPU, memory, network, and disk metrics" },
   images: { title: "Images", subtitle: "Pull new images or clear out old ones" },
+  compose: { title: "Compose Generator", subtitle: "Build a docker-compose.yml with guided steps" },
   settings: { title: "Appearance", subtitle: "Make it yours" },
   admin: { title: "Access Control", subtitle: "Users, teams, roles, and permissions" },
 };
@@ -87,6 +89,7 @@ function Shell() {
           {page === "containers" && <Containers />}
           {page === "monitoring" && <Monitoring />}
           {page === "images" && <Images />}
+          {page === "compose" && <ComposeGenerator />}
           {page === "settings" && <Settings />}
           {page === "admin" && <Admin />}
         </div>

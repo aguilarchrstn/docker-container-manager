@@ -1,21 +1,26 @@
 import { useAuth } from "../context/AuthContext.jsx";
 import { PERMISSIONS } from "../lib/permissions.js";
 
-const NAV = [
-  { key: "dashboard", label: "Dashboard" },
+// "Dashboard" is a section header whose children are the operational pages.
+const DASHBOARD_NAV = [
+  { key: "dashboard", label: "Overview" },
   { key: "containers", label: "Containers", permission: PERMISSIONS.CONTAINERS_VIEW },
   { key: "monitoring", label: "Monitoring", permission: PERMISSIONS.CONTAINERS_VIEW },
   { key: "images", label: "Images", permission: PERMISSIONS.IMAGES_VIEW },
-  { key: "settings", label: "Appearance" },
+  { key: "compose", label: "Compose Generator" },
 ];
 
-const ADMIN_NAV = { key: "admin", label: "Access Control", permission: PERMISSIONS.USERS_MANAGE };
+// Administrator section. Appearance sits under Access Control per request.
+const ADMIN_NAV = [
+  { key: "admin", label: "Access Control", permission: PERMISSIONS.USERS_MANAGE },
+  { key: "settings", label: "Appearance" },
+];
 
 export default function Sidebar({ page, onNavigate, counts }) {
   const { user, can, logout } = useAuth();
 
-  const items = NAV.filter((item) => !item.permission || can(item.permission));
-  const showAdmin = can(ADMIN_NAV.permission);
+  const dashItems = DASHBOARD_NAV.filter((i) => !i.permission || can(i.permission));
+  const adminItems = ADMIN_NAV.filter((i) => !i.permission || can(i.permission));
 
   return (
     <nav className="sidebar">
@@ -23,28 +28,31 @@ export default function Sidebar({ page, onNavigate, counts }) {
         <span className="mark" />
         Dry Dock
       </div>
-      {items.map((item) => (
+
+      <div className="sidebar-section-label">Dashboard</div>
+      {dashItems.map((item) => (
         <button
           key={item.key}
           className={`nav-item ${page === item.key ? "active" : ""}`}
           onClick={() => onNavigate(item.key)}
         >
           {item.label}
-          {counts?.[item.key] != null && (
-            <span className="count">{counts[item.key]}</span>
-          )}
+          {counts?.[item.key] != null && <span className="count">{counts[item.key]}</span>}
         </button>
       ))}
 
-      {showAdmin && (
+      {adminItems.length > 0 && (
         <>
-          <div className="sidebar-section-label">Governance</div>
-          <button
-            className={`nav-item ${page === ADMIN_NAV.key ? "active" : ""}`}
-            onClick={() => onNavigate(ADMIN_NAV.key)}
-          >
-            {ADMIN_NAV.label}
-          </button>
+          <div className="sidebar-section-label">Administrator</div>
+          {adminItems.map((item) => (
+            <button
+              key={item.key}
+              className={`nav-item ${page === item.key ? "active" : ""}`}
+              onClick={() => onNavigate(item.key)}
+            >
+              {item.label}
+            </button>
+          ))}
         </>
       )}
 
@@ -53,7 +61,7 @@ export default function Sidebar({ page, onNavigate, counts }) {
           <div className="sidebar-user-name">{user?.displayName || user?.username}</div>
           <button className="btn btn-ghost btn-sm" onClick={logout}>Sign out</button>
         </div>
-        <div>Dry Dock v1.1</div>
+        <div>Dry Dock v1.2</div>
       </div>
     </nav>
   );
