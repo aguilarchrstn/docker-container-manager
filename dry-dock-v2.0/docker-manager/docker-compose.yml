@@ -1,0 +1,18 @@
+services:
+  drydock:
+    build: .
+    image: drydock:latest
+    container_name: drydock
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    volumes:
+      # Gives the app access to the host's Docker Engine so it can manage
+      # containers/images. This is equivalent to root on the host — only
+      # expose this port to networks/people you trust.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Persists the saved theme (and any future settings) across restarts.
+      - drydock-data:/app/server/data
+
+volumes:
+  drydock-data:
