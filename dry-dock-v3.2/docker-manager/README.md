@@ -63,13 +63,15 @@ lets you pick every UI color.
     log retention (default 15 days), the notifications toggle, and session
     duration — see "Settings" below.
   - **Compose Generator**: a guided 7-step wizard (Basic, Docker Access,
-    Extra Storage, Runtime, Security, Database, Authentication) that builds
-    a real `docker-compose.yml` live as you fill it in — every field maps
-    to something the server actually reads (`PORT`, `DOCKER_SOCKET_PATH`/
-    socket-proxy mode, `LOG_LEVEL`/`LOG_JSON`, `JWT_SECRET`/`AGENT_TOKEN`,
-    and now a full external **PostgreSQL** setup — see "Database backend"
-    below). The Authentication step's OIDC toggle is still a "coming soon"
-    placeholder — no fake env vars for a feature that doesn't exist yet.
+    Project Storage, Runtime, Security, Database, Authentication) that
+    builds a real `docker-compose.yml` live as you fill it in — every field
+    maps to something the server actually reads (`PORT`,
+    `DOCKER_SOCKET_PATH`/socket-proxy mode, `LOG_LEVEL`/`LOG_JSON`,
+    `JWT_SECRET`/`AGENT_TOKEN`/`ENCRYPTION_KEY`, and now a full external
+    **PostgreSQL** setup — see "Database backend" below). The Basic step's
+    App URL field is reference-only (Dry Dock doesn't read it as an env
+    var, so nothing's emitted for it), and Authentication's OIDC toggle is
+    still a "coming soon" placeholder — no fake env vars either way.
   - **Dry Dock Agent**: a separate, much smaller companion app for remote
     nodes — deploy this instead of the full manager when you just need
     Docker access exposed behind a shared secret. It's distributed as its
@@ -204,6 +206,29 @@ All four are backed by real settings (`server/data/settings.json`), not
 placeholders — gated by the `settings.manage` permission (Administrator
 role only, by default).
 
+## Encryption at rest
+
+By default, the auto-generated `JWT_SECRET` and `AGENT_TOKEN` (when you
+don't pin them yourself) are persisted as plain values in
+`server/data/settings.json` (or the `dry_dock_store` table, if you're on
+Postgres) — same as they always were.
+
+Set **`ENCRYPTION_KEY`** to anything (any string — it's hashed down to a
+proper AES-256 key, no need to generate exact-length hex yourself) and
+those two get encrypted (AES-256-GCM) before they're written. Values you
+pin explicitly via `JWT_SECRET`/`AGENT_TOKEN` env vars are never persisted
+either way, encrypted or not — this only affects the auto-generated case.
+
+The Compose Generator's Security step has a "Generate" button for this
+alongside JWT secret and agent token.
+
+**Important:** if you set `ENCRYPTION_KEY` after secrets have already been
+encrypted with a *different* key (or remove it after they were encrypted
+at all), Dry Dock won't be able to decrypt them on boot. There's no
+migration step for a key rotation — if that happens, delete the
+`jwtSecret`/`agentToken` entries from `server/data/settings.json` (or the
+equivalent database row) so they regenerate fresh under the new key.
+
 ## Database backend
 
 By default Dry Dock stores its own data — users, teams, roles,
@@ -264,7 +289,7 @@ to mount the socket in, same as the compose file does.
 ## Customizing the look
 
 Go to **Appearance** in the sidebar. Pick one of the five built-in presets
-(Dry Dock, Deep Sea, Graphite, Quay, Signal) as a starting point, or open any
+(Dry Dock, Deep Sea, Graphite, Dry Dock Light, Signal) as a starting point, or open any
 individual color — page background, sidebar, primary accent, status colors,
 etc. — and set an exact hex value or use the color picker. Every change
 previews instantly across the whole app; hit **Save theme** to persist it.
@@ -294,6 +319,7 @@ server/
     store.js                        generic collections (users/teams/roles/environments/settings/activity) + theme/presets — JSON files or Postgres, see db.js
     db.js                             optional PostgreSQL backend (DATABASE_URL) — one key/value table mirroring the JSON-file shape
     auth.js                          password hashing, JWT session signing (config-aware duration), agent token management
+    crypto.js                          optional AES-256-GCM encryption at rest for persisted secrets (ENCRYPTION_KEY)
     rbac.js                           permission catalogue + default roles + effective-permission calculation
     seed.js                            first-boot defaults: admin user, roles, default team, local environment
     logger.js                          LOG_LEVEL/LOG_JSON-aware logger + request logging middleware
