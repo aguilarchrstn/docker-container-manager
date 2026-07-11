@@ -35,6 +35,14 @@ lets you pick every UI color.
     network, and disk I/O, polling every few seconds — plus a per-container
     stats modal with a CPU sparkline.
   - Images: list, pull (with live progress), remove.
+  - **Dashboard**: drag-and-drop to reorder environment cards ("Manage
+    nodes" button) — the order is saved and applies everywhere environments
+    are listed, not just this page.
+  - **API tokens**: generate personal access tokens under My Account →
+    API tokens for scripting against Dry Dock's API — send one as
+    `Authorization: Bearer <token>` instead of a session cookie. Tokens act
+    with your exact permissions; only the hash is ever stored, the
+    plaintext value is shown once, at creation.
   - **Volumes & Networks**: list, create, and remove — same environment-
     scoped, agent-compatible treatment as Containers/Images, built on the
     same shared-handler pattern.
@@ -396,7 +404,6 @@ every node.
   only touch the staging node" scoping yet).
 - Richer audit detail (the Activity log records what happened, not
   before/after diffs of config changes).
-- API tokens for scripting against Dry Dock without a session cookie.
 - Per-user theme and notification preferences (both are global settings
   today, not per-account).
 - SSO / OAuth login (only local username+password accounts for now — the
