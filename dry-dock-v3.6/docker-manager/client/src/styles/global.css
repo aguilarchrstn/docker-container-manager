@@ -1684,3 +1684,95 @@ button {
   cursor: grab;
   line-height: 1;
 }
+
+/* ---------- Premium Redesign Overrides ---------- */
+
+/* Custom smooth scrollbars */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 99px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Glassmorphism for cards, panels, and toolbar surfaces */
+.env-card, 
+.manifest, 
+.modal, 
+.bulk-toolbar, 
+.form-section-card {
+  background: rgba(26, 31, 39, 0.65) !important;
+  backdrop-filter: blur(12px) saturate(180%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3) !important;
+  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+/* Hover scales on environment cards */
+.env-card:hover {
+  transform: translateY(-4px);
+  border-color: var(--color-primary) !important;
+  box-shadow: 0 12px 40px 0 rgba(0, 153, 255, 0.18) !important;
+}
+
+/* Dynamic glow animation for active nodes/containers */
+.led.running {
+  box-shadow: 0 0 10px var(--color-success);
+  animation: pulse-glow 2s infinite alternate;
+}
+@keyframes pulse-glow {
+  from { opacity: 0.75; box-shadow: 0 0 4px var(--color-success); }
+  to { opacity: 1; box-shadow: 0 0 12px var(--color-success); }
+}
+
+/* Polished premium sidebar links */
+.sidebar {
+  background: linear-gradient(180deg, rgba(13, 16, 21, 0.95) 0%, rgba(8, 10, 14, 0.98) 100%) !important;
+  backdrop-filter: blur(16px);
+}
+.nav-item {
+  transition: all 0.2s ease-in-out;
+  position: relative;
+  overflow: hidden;
+}
+.nav-item:hover {
+  background: rgba(255, 255, 255, 0.04) !important;
+  color: #fff !important;
+  padding-left: 14px;
+}
+.nav-item.active {
+  background: linear-gradient(95deg, rgba(58, 161, 255, 0.15) 0%, rgba(58, 161, 255, 0.03) 100%) !important;
+  border-left: 3px solid var(--color-primary) !important;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0 !important;
+  padding-left: 12px;
+}
+
+/* Tab button micro-hover transitions */
+.tab-btn {
+  transition: all 0.2s ease-in-out;
+}
+.tab-btn:hover {
+  color: var(--color-text) !important;
+}
+
+/* Button micro-interactions */
+.btn {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+.btn:hover {
+  transform: scale(1.02);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+.btn-primary:hover {
+  box-shadow: 0 4px 15px rgba(58, 161, 255, 0.3) !important;
+}
+

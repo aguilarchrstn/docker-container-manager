@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getDashboard, deleteEnvironment, reorderEnvironments } from "../api.js";
+import { getDashboard, deleteEnvironment, reorderEnvironments, updateEnvironment } from "../api.js";
 import EnvironmentWizard from "../components/EnvironmentWizard.jsx";
 import LoadingState from "../components/LoadingState.jsx";
 import { useMinLoadingTime } from "../lib/useMinLoadingTime.js";
@@ -36,6 +36,24 @@ export default function Dashboard({ onSwitchEnvironment }) {
   const [reordering, setReordering] = useState(false);
   const dragIndex = useRef(null);
   const suppressRefresh = useRef(false);
+  const [editingId, setEditingId] = useState(null);
+  const [editName, setEditName] = useState("");
+  const [editDesc, setEditDesc] = useState("");
+
+  async function handleSaveEdit(id) {
+    if (!editName.trim()) {
+      alert("Name is required");
+      return;
+    }
+    try {
+      await updateEnvironment(id, { name: editName.trim(), description: editDesc.trim() });
+      setEditingId(null);
+      refresh();
+      refreshEnvironments();
+    } catch (err) {
+      alert(err.message);
+    }
+  }
 
   const refresh = useCallback(() => {
     if (suppressRefresh.current) return Promise.resolve(); // mid-drag — don't let a poll tick reset the order
@@ -145,21 +163,68 @@ export default function Dashboard({ onSwitchEnvironment }) {
               onDragOver={(e) => handleDragOver(e, index)}
               onDragEnd={handleDragEnd}
             >
-              <div className="env-card-top">
+               <div className="env-card-top">
                 {reordering && <span className="env-card-handle">⠿</span>}
                 <span className={`led ${card.online ? "running" : "dead"}`} />
-                <div className="env-card-name">{card.name}</div>
-                {!reordering && !card.id.startsWith("local") && canManage && (
-                  <button
-                    className="btn btn-ghost btn-sm"
-                    onClick={() => handleRemove(card.id, card.name)}
-                  >
-                    Remove
-                  </button>
+                {editingId === card.id ? (
+                  <div style={{ flex: 1, marginTop: 4 }} onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="text"
+                      className="form-input text-sm"
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                      placeholder="Name"
+                      style={{ width: "100%", marginBottom: 6, padding: "4px 8px" }}
+                      autoFocus
+                    />
+                    <input
+                      type="text"
+                      className="form-input text-sm"
+                      value={editDesc}
+                      onChange={(e) => setEditDesc(e.target.value)}
+                      placeholder="Description"
+                      style={{ width: "100%", marginBottom: 6, padding: "4px 8px" }}
+                    />
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button className="btn btn-sm btn-primary" onClick={() => handleSaveEdit(card.id)}>
+                        Save
+                      </button>
+                      <button className="btn btn-sm btn-ghost" onClick={() => setEditingId(null)}>
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="env-card-name">{card.name}</div>
+                    {!reordering && canManage && (
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        style={{ padding: "2px 6px", marginRight: 4, opacity: 0.7 }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditingId(card.id);
+                          setEditName(card.name);
+                          setEditDesc(card.description || "");
+                        }}
+                        title="Rename/edit environment"
+                      >
+                        ✏️
+                      </button>
+                    )}
+                    {!reordering && !card.id.startsWith("local") && canManage && (
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => handleRemove(card.id, card.name)}
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </>
                 )}
               </div>
               <div className="env-card-type">{TYPE_LABELS[card.type] || card.type}</div>
-              {card.description && <div className="field-hint">{card.description}</div>}
+              {editingId !== card.id && card.description && <div className="field-hint">{card.description}</div>}
 
               {card.online ? (
                 <div className="stat-grid" style={{ marginTop: 12 }}>

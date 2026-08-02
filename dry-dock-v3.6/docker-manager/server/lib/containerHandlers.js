@@ -2,6 +2,8 @@ import { getEngine } from "./dockerPool.js";
 import { isSelfContainer } from "./self.js";
 import { summarizeStats } from "./stats.js";
 import { fetchCadvisorStats, fetchCadvisorStatsForOne } from "./cadvisor.js";
+import { readCollection, writeCollection, readSettings } from "./store.js";
+import { newId } from "./auth.js";
 
 function formatPorts(ports = []) {
   return ports
@@ -47,18 +49,26 @@ export function registerContainerRoutes(router, { viewGuards = [], manageGuards 
     try {
       const docker = await getEngine(req.environment.id);
       const list = await docker.listContainers({ all: true });
+      const settings = await readSettings().catch(() => ({}));
+      const protectedList = settings.protectedContainers || [];
       const containers = await Promise.all(
-        list.map(async (c) => ({
-          id: c.Id,
-          shortId: c.Id.slice(0, 12),
-          name: (c.Names?.[0] || "").replace(/^\//, ""),
-          image: c.Image,
-          state: c.State,
-          status: c.Status,
-          ports: formatPorts(c.Ports),
-          created: c.Created,
-          isSelf: req.environment.id === "local" ? await isSelfContainer(c.Id) : false,
-        }))
+        list.map(async (c) => {
+          const name = (c.Names?.[0] || "").replace(/^\//, "");
+          const isProtected = protectedList.includes(`${req.environment.id}:${name}`) ||
+                              protectedList.includes(`${req.environment.id}:${c.Id}`);
+          return {
+            id: c.Id,
+            shortId: c.Id.slice(0, 12),
+            name,
+            image: c.Image,
+            state: c.State,
+            status: c.Status,
+            ports: formatPorts(c.Ports),
+            created: c.Created,
+            isSelf: req.environment.id === "local" ? await isSelfContainer(c.Id) : false,
+            isProtected: !!isProtected,
+          };
+        })
       );
       res.json({ containers });
     } catch (err) {
@@ -333,11 +343,134 @@ export function registerContainerRoutes(router, { viewGuards = [], manageGuards 
     }
   });
 
+  router.get("/backups/list", ...viewGuards, async (req, res) => {
+    try {
+      const backups = await readCollection("container_backups", []);
+      const filtered = backups.filter((b) => b.envId === req.environment.id);
+      res.json({ backups: filtered });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.post("/backups/:id/restore", ...manageGuards, async (req, res) => {
+    try {
+      const backups = await readCollection("container_backups", []);
+      const backup = backups.find((b) => b.id === req.params.id && b.envId === req.environment.id);
+      if (!backup) {
+        return res.status(404).json({ error: "Backup not found" });
+      }
+
+      const docker = await getEngine(req.environment.id);
+      const existingContainers = await docker.listContainers({ all: true });
+      let restoreName = backup.name;
+      const nameExists = existingContainers.some(
+        (c) => (c.Names?.[0] || "").replace(/^\//, "") === restoreName
+      );
+      if (nameExists) {
+        restoreName = `${restoreName}-restored-${Date.now().toString().slice(-4)}`;
+      }
+
+      const info = backup.inspect;
+      const originalPorts = info.Config?.ExposedPorts || {};
+      const originalBindings = info.HostConfig?.PortBindings || {};
+
+      const createOpts = {
+        Image: backup.backupImage,
+        name: restoreName,
+        Cmd: info.Config?.Cmd || undefined,
+        Entrypoint: info.Config?.Entrypoint || undefined,
+        Env: info.Config?.Env || undefined,
+        WorkingDir: info.Config?.WorkingDir || undefined,
+        Labels: info.Config?.Labels || undefined,
+        ExposedPorts: Object.keys(originalPorts).length ? originalPorts : undefined,
+        HostConfig: {
+          PortBindings: Object.keys(originalBindings).length ? originalBindings : undefined,
+          Binds: info.HostConfig?.Binds || undefined,
+          RestartPolicy: info.HostConfig?.RestartPolicy || undefined,
+          NetworkMode: info.HostConfig?.NetworkMode || undefined,
+          Devices: info.HostConfig?.Devices || undefined,
+          LogConfig: info.HostConfig?.LogConfig || undefined,
+          VolumeDriver: info.HostConfig?.VolumeDriver || undefined,
+          Privileged: info.HostConfig?.Privileged || false,
+        },
+      };
+
+      const container = await docker.createContainer(createOpts);
+      await container.start();
+      res.status(201).json({ id: container.id, name: restoreName });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.delete("/backups/:id", ...manageGuards, async (req, res) => {
+    try {
+      const backups = await readCollection("container_backups", []);
+      const idx = backups.findIndex((b) => b.id === req.params.id && b.envId === req.environment.id);
+      if (idx === -1) {
+        return res.status(404).json({ error: "Backup not found" });
+      }
+
+      const backup = backups[idx];
+      const docker = await getEngine(req.environment.id);
+
+      try {
+        const image = docker.getImage(backup.backupImage);
+        await image.remove({ force: true });
+      } catch (imgErr) {
+        // Ignore image removal failure
+      }
+
+      backups.splice(idx, 1);
+      await writeCollection("container_backups", backups);
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   router.delete("/:id", ...manageGuards, blockIfSelf, async (req, res) => {
     try {
       const docker = await getEngine(req.environment.id);
       const force = req.query.force === "true";
-      await docker.getContainer(req.params.id).remove({ force });
+      const container = docker.getContainer(req.params.id);
+
+      const info = await container.inspect();
+      const containerName = (info.Name || "").replace(/^\//, "");
+
+      const settings = await readSettings().catch(() => ({}));
+      const protectedList = settings.protectedContainers || [];
+      const isProtected = protectedList.includes(`${req.environment.id}:${containerName}`) ||
+                          protectedList.includes(`${req.environment.id}:${req.params.id}`);
+      if (isProtected) {
+        return res.status(409).json({ error: `Container "${containerName}" is protected and cannot be deleted.` });
+      }
+
+      const backupId = newId("backup");
+      const backupRepo = "drydock-backup";
+      const backupTag = backupId;
+      const fullBackupImage = `${backupRepo}:${backupTag}`;
+
+      try {
+        await container.commit({ repo: backupRepo, tag: backupTag });
+        const backups = await readCollection("container_backups", []);
+        const backupRecord = {
+          id: backupId,
+          envId: req.environment.id,
+          name: containerName,
+          originalImage: info.Config?.Image,
+          backupImage: fullBackupImage,
+          inspect: info,
+          createdAt: new Date().toISOString(),
+        };
+        backups.push(backupRecord);
+        await writeCollection("container_backups", backups);
+      } catch (backupErr) {
+        return res.status(500).json({ error: `Fail-safe backup failed: ${backupErr.message}. Deletion aborted.` });
+      }
+
+      await container.remove({ force });
       res.json({ ok: true });
     } catch (err) {
       res.status(err.statusCode || 500).json({ error: err.message });

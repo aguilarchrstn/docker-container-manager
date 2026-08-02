@@ -24,6 +24,7 @@ settingsRouter.get("/", async (req, res) => {
       notificationsEnabled: settings.notificationsEnabled ?? DEFAULTS.notificationsEnabled,
       sessionDurationDays: settings.sessionDurationDays ?? DEFAULTS.sessionDurationDays,
       autoLogoutMinutes: settings.autoLogoutMinutes ?? DEFAULTS.autoLogoutMinutes,
+      protectedContainers: settings.protectedContainers ?? [],
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -32,7 +33,7 @@ settingsRouter.get("/", async (req, res) => {
 
 settingsRouter.put("/", requirePermission(PERMISSIONS.SETTINGS_MANAGE), async (req, res) => {
   try {
-    const { activityRetentionDays, notificationsEnabled, sessionDurationDays, autoLogoutMinutes } = req.body || {};
+    const { activityRetentionDays, notificationsEnabled, sessionDurationDays, autoLogoutMinutes, protectedContainers } = req.body || {};
     const settings = await readSettings();
 
     if (activityRetentionDays !== undefined) {
@@ -58,6 +59,12 @@ settingsRouter.put("/", requirePermission(PERMISSIONS.SETTINGS_MANAGE), async (r
         return res.status(400).json({ error: "Auto-logout must be between 0 (disabled) and 1440 minutes" });
       }
       settings.autoLogoutMinutes = n;
+    }
+    if (protectedContainers !== undefined) {
+      if (!Array.isArray(protectedContainers)) {
+        return res.status(400).json({ error: "protectedContainers must be an array of strings" });
+      }
+      settings.protectedContainers = protectedContainers;
     }
 
     await writeSettings(settings);

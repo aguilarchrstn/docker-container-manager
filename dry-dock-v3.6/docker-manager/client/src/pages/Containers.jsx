@@ -8,11 +8,15 @@ import {
   pauseContainer,
   resumeContainer,
   removeContainer,
+  listBackups,
+  restoreBackup,
+  deleteBackup,
 } from "../api.js";
 import StatusDot from "../components/StatusDot.jsx";
 import LogsModal from "../components/LogsModal.jsx";
 import StatsModal from "../components/StatsModal.jsx";
 import CreateContainerModal from "../components/CreateContainerModal.jsx";
+import DeleteConfirmationModal from "../components/DeleteConfirmationModal.jsx";
 import LoadingState from "../components/LoadingState.jsx";
 import { useNodeLoading } from "../lib/useNodeLoading.js";
 import { useEnvironment } from "../context/EnvironmentContext.jsx";
@@ -44,6 +48,27 @@ export default function Containers() {
   const [logsTarget, setLogsTarget] = useState(null);
   const [statsTarget, setStatsTarget] = useState(null);
   const [createMode, setCreateMode] = useState(null); // null | "pull" | "existing"
+  const [tab, setTab] = useState("containers"); // containers | backups
+  const [backups, setBackups] = useState([]);
+  const [loadingBackups, setLoadingBackups] = useState(false);
+  const [deleteConfirmTarget, setDeleteConfirmTarget] = useState(null);
+
+  const refreshBackups = useCallback(() => {
+    setLoadingBackups(true);
+    return listBackups()
+      .then((data) => {
+        setBackups(data);
+        setError(null);
+      })
+      .catch((err) => setError(err.message))
+      .finally(() => setLoadingBackups(false));
+  }, []);
+
+  useEffect(() => {
+    if (tab === "backups") {
+      refreshBackups();
+    }
+  }, [tab, currentId, refreshBackups]);
 
   const refresh = useCallback(() => {
     return listContainers()
@@ -97,6 +122,18 @@ export default function Containers() {
   async function runBulk(action) {
     const ids = [...selected];
     if (ids.length === 0) return;
+    const toAct = containers.filter((c) => selected.has(c.id));
+
+    if (action.key === "remove") {
+      const protectedSelected = toAct.filter((c) => c.isProtected);
+      if (protectedSelected.length > 0) {
+        alert(`Accidental deletion prevented: The following container(s) are protected and must be unlocked in Settings first:\n${protectedSelected.map(c => `• ${c.name}`).join('\n')}`);
+        return;
+      }
+      setDeleteConfirmTarget(toAct);
+      return;
+    }
+
     if (action.confirm && !confirm(action.confirm(ids.length))) return;
 
     setRunningAction(action.key);
@@ -133,6 +170,43 @@ export default function Containers() {
 
       {error && <div className="banner error">{error}</div>}
 
+      <div className="tab-control" style={{ display: "flex", gap: 16, borderBottom: "1px solid var(--color-border)", marginBottom: 20 }}>
+        <button
+          className={`tab-btn ${tab === "containers" ? "active" : ""}`}
+          style={{
+            background: "none",
+            border: "none",
+            borderBottom: tab === "containers" ? "2px solid var(--color-primary)" : "2px solid transparent",
+            color: tab === "containers" ? "var(--color-text)" : "var(--color-textMuted)",
+            padding: "8px 16px",
+            fontSize: 14,
+            fontWeight: "600",
+            cursor: "pointer",
+            marginBottom: "-1px"
+          }}
+          onClick={() => setTab("containers")}
+        >
+          Active Containers
+        </button>
+        <button
+          className={`tab-btn ${tab === "backups" ? "active" : ""}`}
+          style={{
+            background: "none",
+            border: "none",
+            borderBottom: tab === "backups" ? "2px solid var(--color-primary)" : "2px solid transparent",
+            color: tab === "backups" ? "var(--color-text)" : "var(--color-textMuted)",
+            padding: "8px 16px",
+            fontSize: 14,
+            fontWeight: "600",
+            cursor: "pointer",
+            marginBottom: "-1px"
+          }}
+          onClick={() => setTab("backups")}
+        >
+          Backup Stack
+        </button>
+      </div>
+
       {selectionCount > 0 && (
         <div className="bulk-toolbar">
           <span className="count">{selectionCount} selected</span>
@@ -153,7 +227,68 @@ export default function Containers() {
         </div>
       )}
 
-      {containers.length === 0 ? (
+      {tab === "backups" ? (
+        loadingBackups ? (
+          <LoadingState label="Loading backups…" />
+        ) : backups.length === 0 ? (
+          <div className="manifest">
+            <div className="empty-state">
+              <div className="title">No backups found</div>
+              When you delete a container, its state will be automatically backed up here for easy restoration.
+            </div>
+          </div>
+        ) : (
+          <div className="manifest">
+            <div className="manifest-header" style={{ display: "grid", gridTemplateColumns: "1.5fr 2fr 1.5fr 1fr", gap: 14, alignItems: "center" }}>
+              <span>Name</span>
+              <span>Original Image</span>
+              <span>Backed Up At</span>
+              <span className="col-center">Actions</span>
+            </div>
+            {backups.map((b) => (
+              <div className="manifest-row" key={b.id} style={{ display: "grid", gridTemplateColumns: "1.5fr 2fr 1.5fr 1fr", gap: 14, alignItems: "center" }}>
+                <span className="name" style={{ fontWeight: "600" }}>{b.name}</span>
+                <span className="mono text-sm">{b.originalImage}</span>
+                <span className="text-sm color-muted" style={{ color: "var(--color-textMuted)" }}>{new Date(b.createdAt).toLocaleString()}</span>
+                <div className="manifest-actions" style={{ justifyContent: "center", gap: 8 }}>
+                  <button
+                    className="btn btn-sm btn-primary"
+                    style={{ backgroundColor: "var(--color-success)", borderColor: "var(--color-success)", color: "#fff" }}
+                    onClick={async () => {
+                      try {
+                        setError(null);
+                        const res = await restoreBackup(b.id);
+                        alert(`Container restored successfully as "${res.name}"!`);
+                        setTab("containers");
+                        refresh();
+                      } catch (err) {
+                        setError(`Restore failed: ${err.message}`);
+                      }
+                    }}
+                  >
+                    Restore
+                  </button>
+                  <button
+                    className="btn btn-sm btn-danger"
+                    onClick={async () => {
+                      if (!confirm(`Permanently delete backup for "${b.name}"? This will clean up the backup Docker image.`)) return;
+                      try {
+                        setError(null);
+                        await deleteBackup(b.id);
+                        refreshBackups();
+                      } catch (err) {
+                        setError(`Delete backup failed: ${err.message}`);
+                      }
+                    }}
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )
+      ) : containers.length === 0 ? (
         <div className="manifest">
           <div className="empty-state">
             <div className="title">No containers found</div>
@@ -192,6 +327,7 @@ export default function Containers() {
               <span className="name">
                 {c.name}
                 {c.isSelf && <span className="self-badge" title="This is the Dry Dock app itself">This app</span>}
+                {c.isProtected && <span className="protected-badge" title="This container is locked against deletion" style={{ display: "inline-flex", alignItems: "center", gap: 4, marginLeft: 8, background: "rgba(62, 207, 142, 0.15)", color: "var(--color-success)", border: "1px solid rgba(62, 207, 142, 0.3)", borderRadius: "999px", padding: "2px 8px", fontSize: 11, fontWeight: "600" }}>🛡️ Protected</span>}
               </span>
               <span className="mono col-center">{c.image}</span>
               <span className="mono col-center">{c.ports.join(", ") || "—"}</span>
@@ -226,6 +362,29 @@ export default function Containers() {
           onCreated={() => {
             setCreateMode(null);
             refresh();
+          }}
+        />
+      )}
+
+      {deleteConfirmTarget && (
+        <DeleteConfirmationModal
+          containers={deleteConfirmTarget}
+          onClose={() => setDeleteConfirmTarget(null)}
+          onConfirm={async () => {
+            const targets = deleteConfirmTarget;
+            setDeleteConfirmTarget(null);
+            setRunningAction("remove");
+            const ids = targets.map((c) => c.id);
+            const results = await Promise.allSettled(ids.map((id) => removeContainer(id, true)));
+            const failures = results.filter((r) => r.status === "rejected");
+            if (failures.length) {
+              setError(`Remove failed for ${failures.length} of ${ids.length} container(s).`);
+            } else {
+              setError(null);
+            }
+            await refresh();
+            setSelected(new Set());
+            setRunningAction(null);
           }}
         />
       )}

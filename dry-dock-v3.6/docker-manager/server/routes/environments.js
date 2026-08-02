@@ -167,14 +167,8 @@ environmentsRouter.put("/:id", requirePermission(PERMISSIONS.ENVIRONMENTS_MANAGE
     // where per-node extras like a cAdvisor URL live, and "This host" is
     // as valid a place to run cAdvisor as any other node. So: block
     // identity edits, allow config merges, even for builtin.
-    if (environments[idx].builtin) {
-      if (name !== undefined || description !== undefined) {
-        return res.status(400).json({ error: "The local environment's name can't be changed" });
-      }
-    } else {
-      if (name !== undefined) environments[idx].name = name.trim();
-      if (description !== undefined) environments[idx].description = description;
-    }
+    if (name !== undefined) environments[idx].name = name.trim();
+    if (description !== undefined) environments[idx].description = description;
 
     if (config !== undefined) {
       // Preserve masked secrets the client sends back unchanged.

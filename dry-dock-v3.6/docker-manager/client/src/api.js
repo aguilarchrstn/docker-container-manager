@@ -73,7 +73,10 @@ export const updateMyProfile = (displayName) =>
 
 // ---------- containers (environment-scoped) ----------
 
-export const listContainers = () => request(withEnv("/containers")).then((r) => r.containers);
+export const listContainers = (envId) => {
+  const path = envId ? `/containers?env=${encodeURIComponent(envId)}` : withEnv("/containers");
+  return request(path).then((r) => r.containers);
+};
 
 export const getContainerLogs = (id, tail = 200) =>
   request(withEnv(`/containers/${id}/logs?tail=${tail}`)).then((r) => r.logs);
@@ -263,3 +266,9 @@ export const clearActivity = () => request("/activity", { method: "DELETE" });
 export const getAppSettings = () => request("/settings");
 export const updateAppSettings = (payload) =>
   request("/settings", { method: "PUT", body: JSON.stringify(payload) });
+
+// ---------- backups (environment-scoped) ----------
+
+export const listBackups = () => request(withEnv("/containers/backups/list")).then((r) => r.backups);
+export const restoreBackup = (id) => request(withEnv(`/containers/backups/${id}/restore`), { method: "POST" });
+export const deleteBackup = (id) => request(withEnv(`/containers/backups/${id}`), { method: "DELETE" });

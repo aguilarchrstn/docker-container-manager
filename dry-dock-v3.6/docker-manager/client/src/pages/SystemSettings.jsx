@@ -1,5 +1,4 @@
-import { useEffect, useState } from "react";
-import { getAppSettings, updateAppSettings } from "../api.js";
+import { getAppSettings, updateAppSettings, listEnvironments, listContainers } from "../api.js";
 import LoadingState from "../components/LoadingState.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
 import { PERMISSIONS } from "../lib/permissions.js";
@@ -13,6 +12,11 @@ export default function SystemSettings() {
   const [error, setError] = useState(null);
   const [saved, setSaved] = useState(false);
 
+  const [envs, setEnvs] = useState([]);
+  const [selectedEnvId, setSelectedEnvId] = useState("local");
+  const [envContainers, setEnvContainers] = useState([]);
+  const [loadingContainers, setLoadingContainers] = useState(false);
+
   useEffect(() => {
     getAppSettings()
       .then((s) => {
@@ -20,7 +24,31 @@ export default function SystemSettings() {
         setForm(s);
       })
       .catch((err) => setError(err.message));
+
+    listEnvironments()
+      .then((data) => {
+        setEnvs(data);
+        if (data.length > 0) {
+          setSelectedEnvId(data[0].id);
+        }
+      })
+      .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!selectedEnvId) return;
+    setLoadingContainers(true);
+    listContainers(selectedEnvId)
+      .then((data) => {
+        setEnvContainers(data);
+      })
+      .catch(() => {
+        setEnvContainers([]);
+      })
+      .finally(() => {
+        setLoadingContainers(false);
+      });
+  }, [selectedEnvId]);
 
   async function handleSave(e) {
     e.preventDefault();
@@ -112,6 +140,66 @@ export default function SystemSettings() {
           />
           <span className="field-hint">Signs everyone out after this many minutes with no mouse/keyboard/scroll activity. Set to 0 to disable.</span>
         </label>
+
+        <h3 style={{ marginTop: 24 }}>Protected Containers</h3>
+        <div className="field-hint" style={{ marginBottom: 16 }}>
+          Prevent accidental deletion by locking specific containers. Protected containers cannot be removed until unlocked.
+        </div>
+        
+        <label className="form-label" style={{ marginBottom: 12 }}>
+          Select Environment
+          <select
+            className="form-input"
+            value={selectedEnvId}
+            disabled={!canManage}
+            onChange={(e) => setSelectedEnvId(e.target.value)}
+          >
+            {envs.map((env) => (
+              <option key={env.id} value={env.id}>
+                {env.name} ({env.type})
+              </option>
+            ))}
+          </select>
+        </label>
+
+        {loadingContainers ? (
+          <div className="field-hint" style={{ marginBottom: 16 }}>Loading containers...</div>
+        ) : envContainers.length === 0 ? (
+          <div className="field-hint" style={{ marginBottom: 16 }}>No containers found in this environment.</div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 200, overflowY: "auto", border: "1px solid var(--color-border)", borderRadius: "var(--radius-sm)", padding: 12, background: "var(--color-surface)", marginBottom: 16 }}>
+            {envContainers.map((c) => {
+              const key = `${selectedEnvId}:${c.name}`;
+              const isLocked = form.protectedContainers?.includes(key) || form.protectedContainers?.includes(`${selectedEnvId}:${c.id}`);
+              
+              return (
+                <label key={c.id} className="form-checkbox" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: 0, padding: "4px 0" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <input
+                      type="checkbox"
+                      checked={!!isLocked}
+                      disabled={!canManage || c.isSelf}
+                      onChange={(e) => {
+                        const updated = e.target.checked
+                          ? [...(form.protectedContainers || []), key]
+                          : (form.protectedContainers || []).filter((k) => k !== key && k !== `${selectedEnvId}:${c.id}`);
+                        setForm((f) => ({ ...f, protectedContainers: updated }));
+                      }}
+                    />
+                    <span>{c.name}</span>
+                  </div>
+                  {c.isSelf ? (
+                    <span className="self-badge" style={{ fontSize: 10, padding: "1px 4px" }}>System</span>
+                  ) : (
+                    <span style={{ fontSize: 12, color: isLocked ? "var(--color-success)" : "var(--color-textMuted)" }}>
+                      {isLocked ? "🛡️ Protected" : "🔓 Unlocked"}
+                    </span>
+                  )}
+                </label>
+              );
+            })}
+          </div>
+        )}
 
         {canManage && (
           <button className="btn btn-primary" type="submit" disabled={saving} style={{ marginTop: 12 }}>
