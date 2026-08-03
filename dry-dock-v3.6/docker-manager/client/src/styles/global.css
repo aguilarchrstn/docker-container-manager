@@ -698,30 +698,179 @@ button {
   margin-top: 2px;
 }
 
-.monitor-header {
+/* ---------- Monitoring: redesigned metrics table ---------- */
+
+.metrics-table {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--color-surface);
+}
+
+/* checkbox col + 7 data cols */
+.metrics-header,
+.metrics-row {
   display: grid;
-  grid-template-columns: 1.3fr 1fr 110px 1.3fr 1fr 1fr 60px;
-  gap: 14px;
-  padding: 10px 16px;
+  grid-template-columns: 34px 1.6fr 1fr 110px 1.4fr 1fr 1fr 56px;
+  gap: 12px;
+  align-items: center;
+  padding: 0 16px;
+}
+
+.metrics-header {
+  height: 38px;
   font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
   color: var(--color-textMuted);
   border-bottom: 1px solid var(--color-border);
+  background: var(--color-surfaceRaised);
 }
 
-.monitor-row {
-  display: grid;
-  grid-template-columns: 1.3fr 1fr 110px 1.3fr 1fr 1fr 60px;
-  gap: 14px;
-  padding: 13px 16px;
+.metrics-col-header {
+  display: flex;
   align-items: center;
+  gap: 4px;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.metrics-col-header.sortable {
+  cursor: pointer;
+  transition: color 0.12s ease;
+}
+
+.metrics-col-header.sortable:hover {
+  color: var(--color-text);
+}
+
+.metrics-col-header.active {
+  color: var(--color-primary);
+}
+
+.sort-icon {
+  font-size: 10px;
+  opacity: 0.6;
+}
+
+.metrics-col-header.active .sort-icon {
+  opacity: 1;
+}
+
+.metrics-row {
+  min-height: 52px;
   border-bottom: 1px solid var(--color-border);
   font-size: 13px;
+  cursor: pointer;
+  transition: background 0.1s ease;
 }
 
-.monitor-row:last-child { border-bottom: none; }
-.monitor-row:hover { background: var(--color-surfaceRaised); }
+.metrics-row:last-child { border-bottom: none; }
+
+.metrics-row:hover {
+  background: var(--color-surfaceRaised);
+}
+
+.metrics-row.selected {
+  background: color-mix(in srgb, var(--color-primary) 8%, var(--color-surface));
+}
+
+.metrics-row.selected:hover {
+  background: color-mix(in srgb, var(--color-primary) 13%, var(--color-surface));
+}
+
+.metrics-check-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.metrics-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metrics-value {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.metrics-sub {
+  display: block;
+  font-size: 11px;
+  color: var(--color-textMuted);
+  margin-top: 1px;
+  margin-bottom: 2px;
+}
+
+.metrics-cpu-cell,
+.metrics-mem-cell {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+}
+
+.metrics-sparkline-cell {
+  display: flex;
+  align-items: center;
+}
+
+.metrics-io-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.metrics-io-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.metrics-io-arrow {
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  width: 12px;
+  text-align: center;
+}
+
+.metrics-io-arrow.down { color: var(--color-primary); }
+.metrics-io-arrow.up   { color: var(--color-success); }
+
+.metrics-io-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--color-textMuted);
+  width: 12px;
+  text-align: center;
+}
+
+.metrics-pids-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.metrics-unavailable {
+  grid-column: 2 / -1;
+  padding: 4px 0;
+}
+
+.metrics-selection-count {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 12%, var(--color-surface));
+  border: 1px solid color-mix(in srgb, var(--color-primary) 35%, var(--color-border));
+  border-radius: 999px;
+  padding: 3px 12px;
+}
 
 /* ---------- Self-protection badge ---------- */
 
@@ -1122,11 +1271,6 @@ button {
   border: 1px solid var(--color-border);
   border-radius: 999px;
   padding: 3px 10px;
-}
-
-.source-badge.cadvisor {
-  color: var(--color-primary);
-  border-color: color-mix(in srgb, var(--color-primary) 40%, var(--color-border));
 }
 
 /* ---------- Stacks: compose editor ---------- */
