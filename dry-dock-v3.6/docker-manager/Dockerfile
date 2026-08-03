@@ -4,6 +4,7 @@ WORKDIR /app/client
 COPY client/package*.json ./
 RUN npm install
 COPY client/ ./
+RUN chmod +x node_modules/.bin/vite || true
 RUN npm run build
 
 # --- assemble the server + static client ---
