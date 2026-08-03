@@ -4,7 +4,7 @@ WORKDIR /app/client
 COPY client/package*.json ./
 RUN npm install
 COPY client/ ./
-RUN npm run build
+RUN npm exec -- vite build
 
 # --- assemble the server + static client ---
 FROM node:20-alpine
