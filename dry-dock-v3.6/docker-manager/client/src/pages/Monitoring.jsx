@@ -4,6 +4,7 @@ import StatBar from "../components/StatBar.jsx";
 import Sparkline from "../components/Sparkline.jsx";
 import LoadingState from "../components/LoadingState.jsx";
 import GaugeDial from "../components/GaugeDial.jsx";
+import ContainerMetricsChart from "../components/ContainerMetricsChart.jsx";
 import { useNodeLoading } from "../lib/useNodeLoading.js";
 import { useEnvironment } from "../context/EnvironmentContext.jsx";
 import { formatBytes, formatPercent } from "../lib/format.js";
@@ -37,12 +38,25 @@ export default function Monitoring() {
   const [loading, setLoading] = useState(true);
   const showLoading = useNodeLoading(loading);
   const [systemStats, setSystemStats] = useState(null);
+  const [chartHistory, setChartHistory] = useState({
+    cpuMax: [],
+    cpuMin: [],
+    cpuAvg: [],
+    memMax: [],
+    memMin: [],
+    memAvg: [],
+    rxRate: [],
+    txRate: [],
+    readRate: [],
+    writeRate: [],
+  });
   const [sortKey, setSortKey] = useState("cpuPercent");
   const [sortDir, setSortDir] = useState("desc");
   const [selected, setSelected] = useState(new Set());
 
   const history = useRef(new Map());
   const prevNet = useRef(new Map());
+  const prevIO = useRef(new Map());
 
   // ── System stats poll ──────────────────────────────────────────────
   useEffect(() => {
@@ -68,8 +82,21 @@ export default function Monitoring() {
     let cancelled = false;
     history.current = new Map();
     prevNet.current = new Map();
+    prevIO.current = new Map();
     setRows([]);
     setSelected(new Set());
+    setChartHistory({
+      cpuMax: [],
+      cpuMin: [],
+      cpuAvg: [],
+      memMax: [],
+      memMin: [],
+      memAvg: [],
+      rxRate: [],
+      txRate: [],
+      readRate: [],
+      writeRate: [],
+    });
     setLoading(true);
 
     async function poll() {
@@ -95,10 +122,64 @@ export default function Monitoring() {
           }
           prevNet.current.set(s.id, { rx: s.netRx || 0, tx: s.netTx || 0, time: now });
 
-          return { ...s, cpuHistory: nextHist, rxRate, txRate };
+          const prevIOEntry = prevIO.current.get(s.id);
+          let readRate = 0;
+          let writeRate = 0;
+          if (prevIOEntry) {
+            const dt = (now - prevIOEntry.time) / 1000;
+            if (dt > 0) {
+              readRate = Math.max(0, (s.blockRead - prevIOEntry.read) / dt);
+              writeRate = Math.max(0, (s.blockWrite - prevIOEntry.write) / dt);
+            }
+          }
+          prevIO.current.set(s.id, { read: s.blockRead || 0, write: s.blockWrite || 0, time: now });
+
+          return { ...s, cpuHistory: nextHist, rxRate, txRate, readRate, writeRate };
         });
 
         setRows(enriched);
+
+        const valid = enriched.filter((row) => !row.error);
+        const statsValues = {
+          cpu: valid.map((row) => row.cpuPercent ?? 0),
+          mem: valid.map((row) => row.memPercent ?? 0),
+          rx: valid.map((row) => row.rxRate ?? 0),
+          tx: valid.map((row) => row.txRate ?? 0),
+          read: valid.map((row) => row.readRate ?? 0),
+          write: valid.map((row) => row.writeRate ?? 0),
+        };
+
+        const summarize = (values) => {
+          if (values.length === 0) return { max: 0, min: 0, avg: 0 };
+          const max = Math.max(...values);
+          const min = Math.min(...values);
+          const avg = values.reduce((sum, value) => sum + value, 0) / values.length;
+          return { max, min, avg };
+        };
+
+        const cpuStats = summarize(statsValues.cpu);
+        const memStats = summarize(statsValues.mem);
+
+        setChartHistory((prev) => {
+          const push = (values, nextValue) => {
+            const next = [...values, nextValue];
+            return next.length > HISTORY_LEN ? next.slice(next.length - HISTORY_LEN) : next;
+          };
+
+          return {
+            cpuMax: push(prev.cpuMax, cpuStats.max),
+            cpuMin: push(prev.cpuMin, cpuStats.min),
+            cpuAvg: push(prev.cpuAvg, cpuStats.avg),
+            memMax: push(prev.memMax, memStats.max),
+            memMin: push(prev.memMin, memStats.min),
+            memAvg: push(prev.memAvg, memStats.avg),
+            rxRate: push(prev.rxRate, summarize(statsValues.rx).avg),
+            txRate: push(prev.txRate, summarize(statsValues.tx).avg),
+            readRate: push(prev.readRate, summarize(statsValues.read).avg),
+            writeRate: push(prev.writeRate, summarize(statsValues.write).avg),
+          };
+        });
+
         setError(null);
       } catch (err) {
         if (!cancelled) setError(err.message);
@@ -200,9 +281,61 @@ export default function Monitoring() {
         </div>
       )}
 
+      {/* ── Overview charts ── */}
+      <div className="section-heading" style={{ marginTop: 8 }}>
+       <h3 style={{ margin: 0 }}>Metrics</h3>
+      </div>
+
+      <div className="monitoring-grid">
+       <ContainerMetricsChart
+         title="CPU usage"
+         series={[
+           { label: "Max", color: "#f27c49", values: chartHistory.cpuMax, fill: false },
+           { label: "Avg", color: "#6fc2ff", values: chartHistory.cpuAvg, fill: false },
+           { label: "Min", color: "#8bd17f", values: chartHistory.cpuMin, fill: false },
+         ]}
+         yLabel="%"
+         yMax={100}
+         height={220}
+       />
+
+       <ContainerMetricsChart
+         title="Memory usage"
+         series={[
+           { label: "Max", color: "#f27c49", values: chartHistory.memMax, fill: false },
+           { label: "Avg", color: "#6fc2ff", values: chartHistory.memAvg, fill: false },
+           { label: "Min", color: "#8bd17f", values: chartHistory.memMin, fill: false },
+         ]}
+         yLabel="%"
+         yMax={100}
+         height={220}
+       />
+
+       <ContainerMetricsChart
+         title="Network traffic"
+         series={[
+           { label: "Receive", color: "#6fc2ff", values: chartHistory.rxRate, fill: false },
+           { label: "Transmit", color: "#8bd17f", values: chartHistory.txRate, fill: false },
+         ]}
+         yLabel="B/s"
+         height={220}
+       />
+
+       <ContainerMetricsChart
+         title="Disk I/O"
+         type="bar"
+         series={[
+           { label: "Read", color: "#6fc2ff", values: chartHistory.readRate },
+           { label: "Write", color: "#8bd17f", values: chartHistory.writeRate },
+         ]}
+         yLabel="B/s"
+         height={220}
+       />
+      </div>
+
       {/* ── Container metrics table ── */}
       <div className="section-heading" style={{ marginTop: 8 }}>
-        <h3 style={{ margin: 0 }}>Containers</h3>
+       <h3 style={{ margin: 0 }}>Containers</h3>
         {selected.size > 0 && (
           <span className="metrics-selection-count">
             {selected.size} selected
